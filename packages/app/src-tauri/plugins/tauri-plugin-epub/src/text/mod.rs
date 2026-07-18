@@ -1,12 +1,12 @@
 pub mod chunker;
-pub mod tokenizer;
-pub mod sanitizer;
-pub mod vectorizer;
 pub mod constants;
+pub mod sanitizer;
+pub mod tokenizer;
+pub mod vectorizer;
 
 // Re-export public types for convenience
 pub use chunker::*;
-pub use tokenizer::*;
-pub use sanitizer::*;
-pub use vectorizer::*;
 pub use constants::*;
+pub use sanitizer::*;
+pub use tokenizer::*;
+pub use vectorizer::*;

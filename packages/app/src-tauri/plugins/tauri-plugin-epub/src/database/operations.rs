@@ -51,10 +51,7 @@ impl<'a> DatabaseOperations<'a> {
     fn insert_embedding(&mut self, chunk_id: i64, embedding: &[f32]) -> Result<()> {
         if self.db.supports_vector_search() {
             // 使用 sqlite-vec 虚拟表，按照示例代码的方式转换为字节
-            let embedding_bytes: Vec<u8> = embedding
-                .iter()
-                .flat_map(|f| f.to_le_bytes())
-                .collect();
+            let embedding_bytes: Vec<u8> = embedding.iter().flat_map(|f| f.to_le_bytes()).collect();
 
             self.db.connection_mut().execute(
                 "INSERT INTO chunk_embeddings (chunk_id, embedding) VALUES (?1, ?2)",
@@ -62,10 +59,7 @@ impl<'a> DatabaseOperations<'a> {
             )?;
         } else {
             // 使用后备表存储向量为 BLOB
-            let embedding_bytes: Vec<u8> = embedding
-                .iter()
-                .flat_map(|f| f.to_le_bytes())
-                .collect();
+            let embedding_bytes: Vec<u8> = embedding.iter().flat_map(|f| f.to_le_bytes()).collect();
 
             self.db.connection_mut().execute(
                 "INSERT INTO chunk_embeddings_fallback (chunk_id, embedding) VALUES (?1, ?2)",
@@ -83,9 +77,9 @@ impl<'a> DatabaseOperations<'a> {
         }
 
         self.db.begin_transaction()?;
-        
+
         let result = self.insert_chunks_batch_inner(chunks);
-        
+
         match result {
             Ok(ids) => {
                 self.db.commit_transaction()?;
@@ -100,12 +94,12 @@ impl<'a> DatabaseOperations<'a> {
 
     fn insert_chunks_batch_inner(&mut self, chunks: &[DocumentChunk]) -> Result<Vec<i64>> {
         let mut chunk_ids = Vec::new();
-        
+
         for chunk in chunks {
             let chunk_id = self.insert_chunk(chunk)?;
             chunk_ids.push(chunk_id);
         }
-        
+
         Ok(chunk_ids)
     }
 }
@@ -141,7 +135,7 @@ mod tests {
     fn test_insert_and_retrieve_chunk() {
         let mut db = create_test_db();
         let mut ops = DatabaseOperations::new(&mut db);
-        
+
         let chunk = create_test_chunk();
         let chunk_id = ops.insert_chunk(&chunk).unwrap();
         assert!(chunk_id > 0);
@@ -155,12 +149,12 @@ mod tests {
     fn test_book_exists() {
         let mut db = create_test_db();
         let mut ops = DatabaseOperations::new(&mut db);
-        
+
         assert!(!ops.book_exists("Test Book", "Test Author").unwrap());
-        
+
         let chunk = create_test_chunk();
         ops.insert_chunk(&chunk).unwrap();
-        
+
         assert!(ops.book_exists("Test Book", "Test Author").unwrap());
     }
 
@@ -168,15 +162,15 @@ mod tests {
     fn test_delete_book() {
         let mut db = create_test_db();
         let mut ops = DatabaseOperations::new(&mut db);
-        
+
         let chunk = create_test_chunk();
         ops.insert_chunk(&chunk).unwrap();
-        
+
         assert!(ops.book_exists("Test Book", "Test Author").unwrap());
-        
+
         let deleted_count = ops.delete_book("Test Book", "Test Author").unwrap();
         assert_eq!(deleted_count, 1);
-        
+
         assert!(!ops.book_exists("Test Book", "Test Author").unwrap());
     }
 }

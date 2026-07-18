@@ -1,8 +1,8 @@
+use regex::Regex;
 use roxmltree::{Document, Node};
 use std::path::{Path, PathBuf};
-use regex::Regex;
 
-use crate::models::{TocNode, FlatTocNode};
+use crate::models::{FlatTocNode, TocNode};
 
 /// 解析 toc.ncx 文件，返回结构化的目录数据
 pub fn parse_toc_file<P: AsRef<Path>>(toc_path: P) -> Result<Vec<TocNode>, String> {
@@ -15,24 +15,24 @@ pub fn parse_toc_content(content: &str) -> Result<Vec<TocNode>, String> {
     // roxmltree 不支持 DTD，某些 toc.ncx 带有 <!DOCTYPE ...>，需要在解析前移除
     let sanitized = strip_doctype(content);
     let doc = Document::parse(&sanitized).map_err(|e| format!("Failed to parse XML: {}", e))?;
-    
+
     // 查找 navMap 元素
     let nav_map = doc
         .root_element()
         .children()
         .find(|node| node.tag_name().name() == "navMap")
         .ok_or("navMap element not found")?;
-    
+
     // 使用可变计数器来生成 playOrder
     let mut play_order_counter = 1u32;
-    
+
     // 解析所有顶层的 navPoint
     let nav_points: Vec<TocNode> = nav_map
         .children()
         .filter(|node| node.is_element() && node.tag_name().name() == "navPoint")
         .map(|node| parse_nav_point(node, &mut play_order_counter))
         .collect::<Result<Vec<_>, _>>()?;
-    
+
     Ok(nav_points)
 }
 
@@ -51,7 +51,7 @@ fn parse_nav_point(node: Node, play_order_counter: &mut u32) -> Result<TocNode, 
         .attribute("id")
         .ok_or("navPoint missing id attribute")?
         .to_string();
-    
+
     // 尝试从属性获取 playOrder，如果不存在则使用计数器
     let play_order: u32 = node
         .attribute("playOrder")
@@ -61,7 +61,7 @@ fn parse_nav_point(node: Node, play_order_counter: &mut u32) -> Result<TocNode, 
             *play_order_counter += 1;
             current
         });
-    
+
     // 获取 navLabel 中的 text
     let title = node
         .children()
@@ -73,7 +73,7 @@ fn parse_nav_point(node: Node, play_order_counter: &mut u32) -> Result<TocNode, 
         .text()
         .ok_or("text content not found")?
         .to_string();
-    
+
     // 获取 content 的 src 属性
     let src = node
         .children()
@@ -82,14 +82,14 @@ fn parse_nav_point(node: Node, play_order_counter: &mut u32) -> Result<TocNode, 
         .attribute("src")
         .ok_or("src attribute not found")?
         .to_string();
-    
+
     // 递归解析子节点
     let children: Vec<TocNode> = node
         .children()
         .filter(|child| child.is_element() && child.tag_name().name() == "navPoint")
         .map(|child| parse_nav_point(child, play_order_counter))
         .collect::<Result<Vec<_>, _>>()?;
-    
+
     Ok(TocNode {
         id,
         play_order,
@@ -99,8 +99,6 @@ fn parse_nav_point(node: Node, play_order_counter: &mut u32) -> Result<TocNode, 
     })
 }
 
-
-
 /// 在 mdbook 目录中查找 toc.ncx 文件
 pub fn find_toc_ncx_in_mdbook<P: AsRef<Path>>(mdbook_dir: P) -> Option<PathBuf> {
     log::info!("Searching for NCX file in: {:?}", mdbook_dir.as_ref());
@@ -108,7 +106,7 @@ pub fn find_toc_ncx_in_mdbook<P: AsRef<Path>>(mdbook_dir: P) -> Option<PathBuf> 
 }
 
 /// 通用的递归文件查找函数
-/// 
+///
 /// # Arguments
 /// * `dir` - 搜索的目录
 /// * `predicate` - 判断文件是否匹配的函数，接受文件路径，返回是否匹配
@@ -131,7 +129,10 @@ where
             } else if path.is_dir() {
                 // 跳过一些不太可能包含目标文件的目录
                 if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
-                    if dir_name.starts_with('.') || dir_name == "target" || dir_name == "node_modules" {
+                    if dir_name.starts_with('.')
+                        || dir_name == "target"
+                        || dir_name == "node_modules"
+                    {
                         continue;
                     }
                 }
@@ -160,7 +161,12 @@ fn find_ncx_recursive<P: AsRef<Path>>(dir: P) -> Option<PathBuf> {
 pub fn flatten_toc(toc_nodes: &[TocNode]) -> Vec<FlatTocNode> {
     let mut result = Vec::new();
 
-    fn flatten_recursive(nodes: &[TocNode], depth: u32, parent_path: &[String], result: &mut Vec<FlatTocNode>) {
+    fn flatten_recursive(
+        nodes: &[TocNode],
+        depth: u32,
+        parent_path: &[String],
+        result: &mut Vec<FlatTocNode>,
+    ) {
         for node in nodes {
             // 处理 src，分离文件路径和锚点
             let (md_src, anchor) = if let Some(hash_pos) = node.src.find('#') {
@@ -230,21 +236,21 @@ pub fn parse_nav_md_content(content: &str) -> Result<Vec<TocNode>, String> {
     // 例如："    1.  [标题](路径#锚点)"
     let re = Regex::new(r"^(\s*)(\d+)\.\s+\[([^\]]+)\]\(([^)]+)\)")
         .map_err(|e| format!("Failed to compile regex: {}", e))?;
-    
+
     let mut play_order = 1u32;
-    
+
     // 临时存储所有节点（包括嵌套），稍后重建树形结构
     let mut flat_items: Vec<(u32, TocNode)> = Vec::new();
-    
+
     for line in content.lines() {
         if let Some(caps) = re.captures(line) {
             let leading_spaces = &caps[1];
             let title = caps[3].trim().to_string();
             let href = caps[4].trim().to_string();
-            
+
             // 计算深度：4个空格 = 1级
             let depth = (leading_spaces.len() / 4) as u32;
-            
+
             // 创建新节点
             let node = TocNode {
                 id: format!("nav_{}", play_order),
@@ -253,12 +259,12 @@ pub fn parse_nav_md_content(content: &str) -> Result<Vec<TocNode>, String> {
                 src: href,
                 children: Vec::new(),
             };
-            
+
             flat_items.push((depth, node));
             play_order += 1;
         }
     }
-    
+
     // 重建树形结构
     build_tree_from_flat(&flat_items)
 }
@@ -268,18 +274,18 @@ fn build_tree_from_flat(items: &[(u32, TocNode)]) -> Result<Vec<TocNode>, String
     if items.is_empty() {
         return Ok(Vec::new());
     }
-    
+
     let mut root_nodes: Vec<TocNode> = Vec::new();
     // 记录每个深度最后一个节点在树中的路径
     let mut depth_paths: Vec<Vec<usize>> = Vec::new();
-    
+
     for (depth, node) in items {
         let depth = *depth;
-        
+
         if depth == 0 {
             // 顶层节点
             root_nodes.push(node.clone());
-            
+
             // 更新路径：深度0的路径就是它在root_nodes中的索引
             if depth_paths.is_empty() {
                 depth_paths.push(vec![root_nodes.len() - 1]);
@@ -289,15 +295,15 @@ fn build_tree_from_flat(items: &[(u32, TocNode)]) -> Result<Vec<TocNode>, String
         } else {
             // 子节点：需要找到父节点
             let depth_usize = depth as usize;
-            
+
             // 确保父节点存在
             if depth_usize == 0 || depth_paths.len() < depth_usize {
                 return Err(format!("Invalid nesting: depth {} but no parent", depth));
             }
-            
+
             // 获取父节点的路径（深度 depth-1）并克隆以避免借用冲突
             let parent_path = depth_paths[depth_usize - 1].clone();
-            
+
             // 通过路径找到父节点并添加子节点
             let mut current = &mut root_nodes;
             for (i, idx) in parent_path.iter().enumerate() {
@@ -306,11 +312,11 @@ fn build_tree_from_flat(items: &[(u32, TocNode)]) -> Result<Vec<TocNode>, String
                 } else {
                     // 最后一个索引：这是父节点
                     current[*idx].children.push(node.clone());
-                    
+
                     // 更新当前深度的路径
                     let mut new_path = parent_path.clone();
                     new_path.push(current[*idx].children.len() - 1);
-                    
+
                     if depth_paths.len() <= depth_usize {
                         depth_paths.push(new_path);
                     } else {
@@ -320,6 +326,6 @@ fn build_tree_from_flat(items: &[(u32, TocNode)]) -> Result<Vec<TocNode>, String
             }
         }
     }
-    
+
     Ok(root_nodes)
 }

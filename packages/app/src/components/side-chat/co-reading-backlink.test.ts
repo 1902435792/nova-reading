@@ -58,6 +58,15 @@ const makeFootprint = (annotationId: string | null): CoReadingFootprint => ({
   processedAt: 1,
 });
 
+test("manual AI reviews navigate source but do not open a co-reading footprint", () => {
+  const review = {
+    ...makeAnnotation("ai"),
+    id: "review-1",
+    sourceNoteId: "human-underline-1",
+  };
+  assert.equal(shouldOpenReadingFootprint(review), false);
+});
+
 test("only AI annotations open the reading footprint backlink", () => {
   assert.equal(shouldOpenReadingFootprint(makeAnnotation("ai")), true);
   assert.equal(shouldOpenReadingFootprint(makeAnnotation("human")), false);

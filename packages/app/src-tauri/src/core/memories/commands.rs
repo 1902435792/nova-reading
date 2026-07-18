@@ -119,10 +119,7 @@ pub async fn get_memories(
 }
 
 #[tauri::command]
-pub async fn get_memory_by_id(
-    app_handle: AppHandle,
-    id: String,
-) -> Result<Option<Memory>, String> {
+pub async fn get_memory_by_id(app_handle: AppHandle, id: String) -> Result<Option<Memory>, String> {
     let db_pool = get_db_pool(&app_handle).await?;
 
     let row = sqlx::query("SELECT * FROM user_memories WHERE id = ?")
@@ -165,7 +162,9 @@ pub async fn update_memory(
 
     if let Some(ref source_type) = data.source_type {
         has_updates = true;
-        separated.push("source_type = ").push_bind(source_type.clone());
+        separated
+            .push("source_type = ")
+            .push_bind(source_type.clone());
     }
 
     if let Some(ref source_id) = data.source_id {
@@ -175,9 +174,7 @@ pub async fn update_memory(
 
     if let Some(ref book_id_opt) = data.book_id {
         has_updates = true;
-        separated
-            .push("book_id = ")
-            .push_bind(book_id_opt.clone());
+        separated.push("book_id = ").push_bind(book_id_opt.clone());
     }
 
     if let Some(ref related_ids_opt) = data.related_memory_ids {
@@ -244,9 +241,7 @@ pub async fn search_memories(
     let search_pattern = format!("%{}%", query);
     let max = limit.unwrap_or(20);
 
-    let mut query_builder = sqlx::QueryBuilder::new(
-        "SELECT * FROM user_memories WHERE (key LIKE "
-    );
+    let mut query_builder = sqlx::QueryBuilder::new("SELECT * FROM user_memories WHERE (key LIKE ");
     query_builder.push_bind(search_pattern.clone());
     query_builder.push(" OR value LIKE ");
     query_builder.push_bind(search_pattern);
@@ -271,10 +266,7 @@ pub async fn search_memories(
 
 /// 内部辅助：增加访问计数并更新 last_accessed_at
 #[tauri::command]
-pub async fn touch_memories(
-    app_handle: AppHandle,
-    ids: Vec<String>,
-) -> Result<(), String> {
+pub async fn touch_memories(app_handle: AppHandle, ids: Vec<String>) -> Result<(), String> {
     if ids.is_empty() {
         return Ok(());
     }

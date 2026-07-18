@@ -30,8 +30,8 @@ pub struct FlatTocNode {
     pub id: String,
     pub play_order: u32,
     pub title: String,
-    pub md_src: String,  // 转换后的 MD 文件路径（不包含锚点）
-    pub depth: u32,      // 节点深度，从0开始
+    pub md_src: String, // 转换后的 MD 文件路径（不包含锚点）
+    pub depth: u32,     // 节点深度，从0开始
     #[serde(default)]
     pub anchor: Option<String>, // 原始 src 的锚点（如果有）
     #[serde(default)]

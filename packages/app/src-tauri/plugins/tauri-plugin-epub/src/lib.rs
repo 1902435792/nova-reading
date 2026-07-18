@@ -13,9 +13,9 @@ mod models;
 mod config;
 
 // Feature modules
+mod database;
 mod epub;
 mod text;
-mod database;
 
 // Core modules
 mod pipeline;

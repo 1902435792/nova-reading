@@ -47,7 +47,8 @@ const uncollapse = (range) => {
     if (node?.nodeType === 1) return node;
     return endContainer;
   }
-  if (endOffset + 1 < endContainer.length) range.setEnd(endContainer, endOffset + 1);
+  if (endOffset + 1 < endContainer.length)
+    range.setEnd(endContainer, endOffset + 1);
   else if (endOffset > 1) range.setStart(endContainer, endOffset - 1);
   else return endContainer.parentNode;
   return range;
@@ -67,11 +68,25 @@ const bisectNode = (doc, node, cb, start = 0, end = node.nodeValue.length) => {
     return result < 0 ? start : end;
   }
   const mid = Math.floor(start + (end - start) / 2);
-  const result = cb(makeRange(doc, node, start, mid), makeRange(doc, node, mid, end));
-  return result < 0 ? bisectNode(doc, node, cb, start, mid) : result > 0 ? bisectNode(doc, node, cb, mid, end) : mid;
+  const result = cb(
+    makeRange(doc, node, start, mid),
+    makeRange(doc, node, mid, end)
+  );
+  return result < 0
+    ? bisectNode(doc, node, cb, start, mid)
+    : result > 0
+    ? bisectNode(doc, node, cb, mid, end)
+    : mid;
 };
 
-const { SHOW_ELEMENT, SHOW_TEXT, SHOW_CDATA_SECTION, FILTER_ACCEPT, FILTER_REJECT, FILTER_SKIP } = NodeFilter;
+const {
+  SHOW_ELEMENT,
+  SHOW_TEXT,
+  SHOW_CDATA_SECTION,
+  FILTER_ACCEPT,
+  FILTER_REJECT,
+  FILTER_SKIP,
+} = NodeFilter;
 
 const filter = SHOW_ELEMENT | SHOW_TEXT | SHOW_CDATA_SECTION;
 
@@ -123,7 +138,8 @@ const getVisibleRange = (doc, start, end, mapRect) => {
   };
   const walker = doc.createTreeWalker(doc.body, filter, { acceptNode });
   const nodes = [];
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node);
+  for (let node = walker.nextNode(); node; node = walker.nextNode())
+    nodes.push(node);
 
   // we're only interested in the first and last visible nodes
   const from = nodes[0] ?? doc.body;
@@ -134,20 +150,20 @@ const getVisibleRange = (doc, start, end, mapRect) => {
     from.nodeType === 1
       ? 0
       : bisectNode(doc, from, (a, b) => {
-        const p = mapRect(getBoundingClientRect(a));
-        const q = mapRect(getBoundingClientRect(b));
-        if (p.right < start && q.left > start) return 0;
-        return q.left > start ? -1 : 1;
-      });
+          const p = mapRect(getBoundingClientRect(a));
+          const q = mapRect(getBoundingClientRect(b));
+          if (p.right < start && q.left > start) return 0;
+          return q.left > start ? -1 : 1;
+        });
   const endOffset =
     to.nodeType === 1
       ? 0
       : bisectNode(doc, to, (a, b) => {
-        const p = mapRect(getBoundingClientRect(a));
-        const q = mapRect(getBoundingClientRect(b));
-        if (p.right < end && q.left > end) return 0;
-        return q.left > end ? -1 : 1;
-      });
+          const p = mapRect(getBoundingClientRect(a));
+          const q = mapRect(getBoundingClientRect(b));
+          if (p.right < end && q.left > end) return 0;
+          return q.left > end ? -1 : 1;
+        });
 
   const range = doc.createRange();
   range.setStart(from, startOffset);
@@ -183,14 +199,19 @@ const setSelectionTo = (target, collapse) => {
 const getDirection = (doc) => {
   const { defaultView } = doc;
   const { writingMode, direction } = defaultView.getComputedStyle(doc.body);
-  const vertical = writingMode === "vertical-rl" || writingMode === "vertical-lr";
-  const rtl = doc.body.dir === "rtl" || direction === "rtl" || doc.documentElement.dir === "rtl";
+  const vertical =
+    writingMode === "vertical-rl" || writingMode === "vertical-lr";
+  const rtl =
+    doc.body.dir === "rtl" ||
+    direction === "rtl" ||
+    doc.documentElement.dir === "rtl";
   return { vertical, rtl };
 };
 
 const getBackground = (doc) => {
   const bodyStyle = doc.defaultView.getComputedStyle(doc.body);
-  return bodyStyle.backgroundColor === "rgba(0, 0, 0, 0)" && bodyStyle.backgroundImage === "none"
+  return bodyStyle.backgroundColor === "rgba(0, 0, 0, 0)" &&
+    bodyStyle.backgroundImage === "none"
     ? doc.defaultView.getComputedStyle(doc.documentElement).background
     : bodyStyle.background;
 };
@@ -206,7 +227,8 @@ const makeMarginals = (length, part) =>
 
 const setStylesImportant = (el, styles) => {
   const { style } = el;
-  for (const [k, v] of Object.entries(styles)) style.setProperty(k, v, "important");
+  for (const [k, v] of Object.entries(styles))
+    style.setProperty(k, v, "important");
 };
 
 class View {
@@ -285,7 +307,7 @@ class View {
 
           resolve();
         },
-        { once: true },
+        { once: true }
       );
       this.#iframe.src = src;
     });
@@ -366,8 +388,8 @@ class View {
         "max-width": vertical
           ? `${width - margin * 2}px`
           : maxWidth !== "none" && maxWidth !== "0px"
-            ? maxWidth
-            : "100%",
+          ? maxWidth
+          : "100%",
         "object-fit": "contain",
         "page-break-inside": "avoid",
         "break-inside": "avoid",
@@ -388,8 +410,8 @@ class View {
       const contentStart = this.#vertical
         ? 0
         : this.#rtl
-          ? rootRect.right - contentRect.right
-          : contentRect.left - rootRect.left;
+        ? rootRect.right - contentRect.right
+        : contentRect.left - rootRect.left;
       const contentSize = contentStart + contentRect[side];
       const pageCount = Math.ceil(contentSize / this.#size);
       const expandedSize = pageCount * this.#size;
@@ -401,8 +423,12 @@ class View {
       documentElement.style[side] = `${this.#size}px`;
       if (this.#overlayer) {
         this.#overlayer.element.style.margin = "0";
-        this.#overlayer.element.style.left = this.#vertical ? "0" : `${this.#size}px`;
-        this.#overlayer.element.style.top = this.#vertical ? `${this.#size}px` : "0";
+        this.#overlayer.element.style.left = this.#vertical
+          ? "0"
+          : `${this.#size}px`;
+        this.#overlayer.element.style.top = this.#vertical
+          ? `${this.#size}px`
+          : "0";
         this.#overlayer.element.style[side] = `${expandedSize}px`;
         this.#overlayer.redraw();
       }
@@ -442,9 +468,16 @@ class View {
 
 // NOTE: everything here assumes the so-called "negative scroll type" for RTL
 export class Paginator extends HTMLElement {
-  static observedAttributes = ["flow", "gap", "margin", "max-inline-size", "max-block-size", "max-column-count"];
+  static observedAttributes = [
+    "flow",
+    "gap",
+    "margin",
+    "max-inline-size",
+    "max-block-size",
+    "max-column-count",
+  ];
   #root = this.attachShadow({ mode: "closed" });
-  #renderTimeout = null;  // 添加节流定时器
+  #renderTimeout = null; // 添加节流定时器
   #observer = new ResizeObserver(() => this.#throttledRender());
   #top;
   #background;
@@ -554,7 +587,9 @@ export class Paginator extends HTMLElement {
     // header/footer elements removed
 
     this.#observer.observe(this.#container);
-    this.#container.addEventListener("scroll", () => this.dispatchEvent(new Event("scroll")));
+    this.#container.addEventListener("scroll", () =>
+      this.dispatchEvent(new Event("scroll"))
+    );
     this.#container.addEventListener(
       "scroll",
       debounce(() => {
@@ -562,7 +597,7 @@ export class Paginator extends HTMLElement {
           if (this.#justAnchored) this.#justAnchored = false;
           else this.#afterScroll("scroll");
         }
-      }, 250),
+      }, 250)
     );
 
     const opts = { passive: false };
@@ -579,7 +614,8 @@ export class Paginator extends HTMLElement {
       if (detail.reason === "selection") setSelectionTo(this.#anchor, 0);
       else if (detail.reason === "navigation") {
         if (this.#anchor === 1) setSelectionTo(detail.range, 1);
-        else if (typeof this.#anchor === "number") setSelectionTo(detail.range, -1);
+        else if (typeof this.#anchor === "number")
+          setSelectionTo(detail.range, -1);
         else setSelectionTo(this.#anchor, -1);
       }
     });
@@ -587,8 +623,16 @@ export class Paginator extends HTMLElement {
       if (!sel.rangeCount) return;
       const selRange = sel.getRangeAt(0);
       const backward = selectionIsBackward(sel);
-      if (backward && selRange.compareBoundaryPoints(Range.START_TO_START, range) < 0) this.prev();
-      else if (!backward && selRange.compareBoundaryPoints(Range.END_TO_END, range) > 0) this.next();
+      if (
+        backward &&
+        selRange.compareBoundaryPoints(Range.START_TO_START, range) < 0
+      )
+        this.prev();
+      else if (
+        !backward &&
+        selRange.compareBoundaryPoints(Range.END_TO_END, range) > 0
+      )
+        this.next();
     }, 700);
     this.addEventListener("load", ({ detail: { doc } }) => {
       let isPointerSelecting = false;
@@ -603,7 +647,8 @@ export class Paginator extends HTMLElement {
         if (!range) return;
         const sel = doc.getSelection();
         if (!sel.rangeCount) return;
-        if (isPointerSelecting && sel.type === "Range") checkPointerSelection(range, sel);
+        if (isPointerSelecting && sel.type === "Range")
+          checkPointerSelection(range, sel);
         else if (isKeyboardSelecting) {
           const selRange = sel.getRangeAt(0).cloneRange();
           const backward = selectionIsBackward(sel);
@@ -615,7 +660,7 @@ export class Paginator extends HTMLElement {
         this.scrolled
           ? null
           : // NOTE: `requestAnimationFrame` is needed in WebKit
-          requestAnimationFrame(() => this.#scrollToAnchor(e.target)),
+            requestAnimationFrame(() => this.#scrollToAnchor(e.target))
       );
     });
 
@@ -635,7 +680,7 @@ export class Paginator extends HTMLElement {
   attributeChangedCallback(name, _, value) {
     switch (name) {
       case "flow":
-        this.#throttledRender();  // 使用节流版本
+        this.#throttledRender(); // 使用节流版本
         break;
       case "gap":
       case "margin":
@@ -646,7 +691,7 @@ export class Paginator extends HTMLElement {
       case "max-inline-size":
         // needs explicit `render()` as it doesn't necessarily resize
         this.#top.style.setProperty("--_" + name, value);
-        this.#throttledRender();  // 使用节流版本
+        this.#throttledRender(); // 使用节流版本
         break;
     }
   }
@@ -662,11 +707,23 @@ export class Paginator extends HTMLElement {
           // unprefix as most of the props are (only) supported unprefixed
           .replace(/(?<=[{\s;])-epub-/gi, "")
           // replace vw and vh as they cause problems with layout
-          .replace(/(\d*\.?\d+)vw/gi, (_, d) => `${(Number.parseFloat(d) * w) / 100}px`)
-          .replace(/(\d*\.?\d+)vh/gi, (_, d) => `${(Number.parseFloat(d) * h) / 100}px`)
+          .replace(
+            /(\d*\.?\d+)vw/gi,
+            (_, d) => `${(Number.parseFloat(d) * w) / 100}px`
+          )
+          .replace(
+            /(\d*\.?\d+)vh/gi,
+            (_, d) => `${(Number.parseFloat(d) * h) / 100}px`
+          )
           // `page-break-*` unsupported in columns; replace with `column-break-*`
-          .replace(/page-break-(after|before|inside)\s*:/gi, (_, x) => `-webkit-column-break-${x}:`)
-          .replace(/break-(after|before|inside)\s*:\s*(avoid-)?page/gi, (_, x, y) => `break-${x}: ${y ?? ""}column`),
+          .replace(
+            /page-break-(after|before|inside)\s*:/gi,
+            (_, x) => `-webkit-column-break-${x}:`
+          )
+          .replace(
+            /break-(after|before|inside)\s*:\s*(avoid-)?page/gi,
+            (_, x, y) => `break-${x}: ${y ?? ""}column`
+          )
       );
     });
   }
@@ -695,8 +752,12 @@ export class Paginator extends HTMLElement {
     const size = vertical ? height : width;
 
     const style = getComputedStyle(this.#top);
-    const maxInlineSize = Number.parseFloat(style.getPropertyValue("--_max-inline-size"));
-    const maxColumnCount = Number.parseInt(style.getPropertyValue("--_max-column-count-spread"));
+    const maxInlineSize = Number.parseFloat(
+      style.getPropertyValue("--_max-inline-size")
+    );
+    const maxColumnCount = Number.parseInt(
+      style.getPropertyValue("--_max-column-count-spread")
+    );
     // header/footer removed; internal top/bottom margin not used
     const margin = 0;
     this.#margin = 0;
@@ -747,7 +808,7 @@ export class Paginator extends HTMLElement {
       this.#beforeRender({
         vertical: this.#vertical,
         rtl: this.#rtl,
-      }),
+      })
     );
     this.#scrollToAnchor(this.#anchor);
   }
@@ -764,11 +825,23 @@ export class Paginator extends HTMLElement {
   }
   get scrollProp() {
     const { scrolled } = this;
-    return this.#vertical ? (scrolled ? "scrollLeft" : "scrollTop") : scrolled ? "scrollTop" : "scrollLeft";
+    return this.#vertical
+      ? scrolled
+        ? "scrollLeft"
+        : "scrollTop"
+      : scrolled
+      ? "scrollTop"
+      : "scrollLeft";
   }
   get sideProp() {
     const { scrolled } = this;
-    return this.#vertical ? (scrolled ? "width" : "height") : scrolled ? "height" : "width";
+    return this.#vertical
+      ? scrolled
+        ? "width"
+        : "height"
+      : scrolled
+      ? "height"
+      : "width";
   }
   get size() {
     return this.#container.getBoundingClientRect()[this.sideProp];
@@ -796,7 +869,10 @@ export class Paginator extends HTMLElement {
     const rtl = this.#rtl;
     const min = rtl ? offset - b : offset - a;
     const max = rtl ? offset + a : offset + b;
-    element[scrollProp] = Math.max(min, Math.min(max, element[scrollProp] + delta));
+    element[scrollProp] = Math.max(
+      min,
+      Math.min(max, element[scrollProp] + delta)
+    );
   }
   snap(vx, vy) {
     const velocity = this.#vertical ? vy : vx;
@@ -805,7 +881,12 @@ export class Paginator extends HTMLElement {
     const min = Math.abs(offset) - a;
     const max = Math.abs(offset) + b;
     const d = velocity * (this.#rtl ? -size : size);
-    const page = Math.floor(Math.max(min, Math.min(max, (start + end) / 2 + (Number.isNaN(d) ? 0 : d))) / size);
+    const page = Math.floor(
+      Math.max(
+        min,
+        Math.min(max, (start + end) / 2 + (Number.isNaN(d) ? 0 : d))
+      ) / size
+    );
 
     this.#scrollToPage(page, "snap").then(() => {
       const dir = page <= 0 ? -1 : page >= pages - 1 ? 1 : null;
@@ -858,7 +939,8 @@ export class Paginator extends HTMLElement {
     // at this point I'm basically throwing `requestAnimationFrame` at
     // anything that doesn't work
     requestAnimationFrame(() => {
-      if (globalThis.visualViewport.scale === 1) this.snap(this.#touchState.vx, this.#touchState.vy);
+      if (globalThis.visualViewport.scale === 1)
+        this.snap(this.#touchState.vx, this.#touchState.vy);
     });
   }
   // allows one to process rects as if they were LTR and horizontal
@@ -867,16 +949,18 @@ export class Paginator extends HTMLElement {
       const size = this.viewSize;
       const margin = this.#margin;
       return this.#vertical
-        ? ({ left, right }) => ({ left: size - right - margin, right: size - left - margin })
+        ? ({ left, right }) => ({
+            left: size - right - margin,
+            right: size - left - margin,
+          })
         : ({ top, bottom }) => ({ left: top + margin, right: bottom + margin });
     }
     const pxSize = this.pages * this.size;
     return this.#rtl
-      ? ({ left, right }) =>
-        ({ left: pxSize - right, right: pxSize - left })
+      ? ({ left, right }) => ({ left: pxSize - right, right: pxSize - left })
       : this.#vertical
-        ? ({ top, bottom }) => ({ left: top, right: bottom })
-        : f => f
+      ? ({ top, bottom }) => ({ left: top, right: bottom })
+      : (f) => f;
   }
   async #scrollToRect(rect, reason) {
     if (this.scrolled) {
@@ -884,26 +968,47 @@ export class Paginator extends HTMLElement {
       return this.#scrollTo(offset, reason);
     }
     const offset = this.#getRectMapper()(rect).left;
-    return this.#scrollToPage(Math.floor(offset / this.size) + (this.#rtl ? -1 : 1), reason);
+    return this.#scrollToPage(
+      Math.floor(offset / this.size) + (this.#rtl ? -1 : 1),
+      reason
+    );
   }
   async #scrollTo(offset, reason, smooth) {
     const element = this.#container;
     const { scrollProp, size } = this;
     if (element[scrollProp] === offset) {
-      this.#scrollBounds = [offset, this.atStart ? 0 : size, this.atEnd ? 0 : size];
+      this.#scrollBounds = [
+        offset,
+        this.atStart ? 0 : size,
+        this.atEnd ? 0 : size,
+      ];
       this.#afterScroll(reason);
       return;
     }
     // FIXME: vertical-rl only, not -lr
     if (this.scrolled && this.#vertical) offset = -offset;
     if ((reason === "snap" || smooth) && this.hasAttribute("animated"))
-      return animate(element[scrollProp], offset, 300, easeOutQuad, (x) => (element[scrollProp] = x)).then(() => {
-        this.#scrollBounds = [offset, this.atStart ? 0 : size, this.atEnd ? 0 : size];
+      return animate(
+        element[scrollProp],
+        offset,
+        300,
+        easeOutQuad,
+        (x) => (element[scrollProp] = x)
+      ).then(() => {
+        this.#scrollBounds = [
+          offset,
+          this.atStart ? 0 : size,
+          this.atEnd ? 0 : size,
+        ];
         this.#afterScroll(reason);
       });
     else {
       element[scrollProp] = offset;
-      this.#scrollBounds = [offset, this.atStart ? 0 : size, this.atEnd ? 0 : size];
+      this.#scrollBounds = [
+        offset,
+        this.atStart ? 0 : size,
+        this.atEnd ? 0 : size,
+      ];
       this.#afterScroll(reason);
     }
   }
@@ -921,7 +1026,8 @@ export class Paginator extends HTMLElement {
     if (rects) {
       // when the start of the range is immediately after a hyphen in the
       // previous column, there is an extra zero width rect in that column
-      const rect = Array.from(rects).find((r) => r.width > 0 && r.height > 0) || rects[0];
+      const rect =
+        Array.from(rects).find((r) => r.width > 0 && r.height > 0) || rects[0];
       if (!rect) return;
       await this.#scrollToRect(rect, reason);
       return;
@@ -943,16 +1049,26 @@ export class Paginator extends HTMLElement {
         this.#view.document,
         this.start + this.#margin,
         this.end - this.#margin,
-        this.#getRectMapper(),
+        this.#getRectMapper()
       );
     const size = this.#rtl ? -this.size : this.size;
-    return getVisibleRange(this.#view.document, this.start - size, this.end - size, this.#getRectMapper());
+    return getVisibleRange(
+      this.#view.document,
+      this.start - size,
+      this.end - size,
+      this.#getRectMapper()
+    );
   }
   #afterScroll(reason) {
     const range = this.#getVisibleRange();
     this.#lastVisibleRange = range;
     // don't set new anchor if relocation was to scroll to anchor
-    if (reason !== "selection" && reason !== "navigation" && reason !== "anchor") this.#anchor = range;
+    if (
+      reason !== "selection" &&
+      reason !== "navigation" &&
+      reason !== "anchor"
+    )
+      this.#anchor = range;
     else this.#justAnchored = true;
 
     const index = this.#index;
@@ -990,11 +1106,15 @@ export class Paginator extends HTMLElement {
             index,
             attach: (overlayer) => (view.overlayer = overlayer),
           },
-        }),
+        })
       );
       this.#view = view;
     }
-    await this.scrollToAnchor((typeof anchor === "function" ? anchor(this.#view.document) : anchor) ?? 0, select);
+    await this.scrollToAnchor(
+      (typeof anchor === "function" ? anchor(this.#view.document) : anchor) ??
+        0,
+      select
+    );
     if (hasFocus) this.focusView();
   }
   #canGoToIndex(index) {
@@ -1016,7 +1136,7 @@ export class Paginator extends HTMLElement {
             console.warn(e);
             console.warn(new Error(`Failed to load section ${index}`));
             return {};
-          }),
+          })
       );
     }
   }
@@ -1028,7 +1148,12 @@ export class Paginator extends HTMLElement {
   #scrollPrev(distance) {
     if (!this.#view) return true;
     if (this.scrolled) {
-      if (this.start > 0) return this.#scrollTo(Math.max(0, this.start - (distance ?? this.size)), null, true);
+      if (this.start > 0)
+        return this.#scrollTo(
+          Math.max(0, this.start - (distance ?? this.size)),
+          null,
+          true
+        );
       return true;
     }
     if (this.atStart) return;
@@ -1039,7 +1164,11 @@ export class Paginator extends HTMLElement {
     if (!this.#view) return true;
     if (this.scrolled) {
       if (this.viewSize - this.end > 2)
-        return this.#scrollTo(Math.min(this.viewSize, distance ? this.start + distance : this.end), null, true);
+        return this.#scrollTo(
+          Math.min(this.viewSize, distance ? this.start + distance : this.end),
+          null,
+          true
+        );
       return true;
     }
     if (this.atEnd) return;
@@ -1061,7 +1190,9 @@ export class Paginator extends HTMLElement {
     if (this.#locked) return;
     this.#locked = true;
     const prev = dir === -1;
-    const shouldGo = await (prev ? this.#scrollPrev(distance) : this.#scrollNext(distance));
+    const shouldGo = await (prev
+      ? this.#scrollPrev(distance)
+      : this.#scrollNext(distance));
     if (shouldGo)
       await this.#goTo({
         index: this.#adjacentIndex(dir),
@@ -1087,7 +1218,9 @@ export class Paginator extends HTMLElement {
     return this.goTo({ index });
   }
   lastSection() {
-    const index = this.sections.findLastIndex((section) => section.linear !== "no");
+    const index = this.sections.findLastIndex(
+      (section) => section.linear !== "no"
+    );
     return this.goTo({ index });
   }
   getContents() {
@@ -1101,6 +1234,14 @@ export class Paginator extends HTMLElement {
       ];
     return [];
   }
+  getVisibleRanges() {
+    if (!this.#view?.document) return [];
+    const range = this.#getVisibleRange();
+    this.#lastVisibleRange = range;
+    return range && !range.collapsed && range.toString().trim()
+      ? [{ index: this.#index, range }]
+      : [];
+  }
   setStyles(styles) {
     this.#styles = styles;
     const $$styles = this.#styleMap.get(this.#view?.document);
@@ -1113,7 +1254,10 @@ export class Paginator extends HTMLElement {
     } else $style.textContent = styles;
 
     // NOTE: needs `requestAnimationFrame` in Chromium
-    requestAnimationFrame(() => (this.#background.style.background = getBackground(this.#view.document)));
+    requestAnimationFrame(
+      () =>
+        (this.#background.style.background = getBackground(this.#view.document))
+    );
 
     // needed because the resize observer doesn't work in Firefox
     this.#view?.document?.fonts?.ready?.then(() => this.#view.expand());

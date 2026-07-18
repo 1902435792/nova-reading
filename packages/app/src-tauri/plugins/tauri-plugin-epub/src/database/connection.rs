@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use rusqlite::ffi::{sqlite3_auto_extension};
+use rusqlite::ffi::sqlite3_auto_extension;
 use rusqlite::Connection;
 use sqlite_vec::sqlite3_vec_init;
 use std::path::Path;
@@ -47,7 +47,7 @@ impl DatabaseConnection {
         // 验证数据库连接
         conn.query_row("SELECT 1", [], |_row| Ok(()))
             .with_context(|| "Database connection is not functional")?;
-            
+
         log::info!("Database connection established successfully");
 
         let mut db = Self {
@@ -57,7 +57,7 @@ impl DatabaseConnection {
 
         db.initialize_schema()
             .with_context(|| "Failed to initialize database schema")?;
-        
+
         log::info!("Database initialized successfully");
         Ok(db)
     }
@@ -97,7 +97,7 @@ impl DatabaseConnection {
     /// 初始化数据库模式
     fn initialize_schema(&mut self) -> Result<()> {
         log::info!("Setting SQLite pragmas for performance...");
-        
+
         // 设置性能优化参数（容错处理）
         let _ = self.conn.execute("PRAGMA synchronous=NORMAL", []);
         let _ = self.conn.execute("PRAGMA cache_size=10000", []);
@@ -105,8 +105,9 @@ impl DatabaseConnection {
         log::info!("SQLite pragmas configured");
 
         // 创建主表
-        self.conn.execute(
-            r#"
+        self.conn
+            .execute(
+                r#"
             CREATE TABLE IF NOT EXISTS document_chunks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 book_title TEXT NOT NULL,
@@ -124,20 +125,23 @@ impl DatabaseConnection {
                 UNIQUE(book_title, book_author, md_file_path, chunk_order_in_file)
             )
             "#,
-            [],
-        ).with_context(|| "Failed to create document_chunks table")?;
+                [],
+            )
+            .with_context(|| "Failed to create document_chunks table")?;
 
         // 创建索引
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_book_info ON document_chunks(book_title, book_author)",
             [],
         ).with_context(|| "Failed to create idx_book_info index")?;
-        
-        self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_file_order ON document_chunks(file_order_in_book)",
-            [],
-        ).with_context(|| "Failed to create idx_file_order index")?;
-        
+
+        self.conn
+            .execute(
+                "CREATE INDEX IF NOT EXISTS idx_file_order ON document_chunks(file_order_in_book)",
+                [],
+            )
+            .with_context(|| "Failed to create idx_file_order index")?;
+
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_global_chunk ON document_chunks(global_chunk_index)",
             [],
@@ -147,7 +151,7 @@ impl DatabaseConnection {
         let table_exists = self.conn.query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='chunk_embeddings'",
             [],
-            |row| Ok(row.get::<_, i64>(0)? > 0)
+            |row| Ok(row.get::<_, i64>(0)? > 0),
         )?;
 
         if !table_exists {
@@ -172,8 +176,6 @@ impl DatabaseConnection {
         Ok(())
     }
 
-
-
     /// 创建向量表（简单版本）
     fn create_vector_table(&self) -> Result<()> {
         let create_sql = format!(
@@ -186,8 +188,12 @@ impl DatabaseConnection {
             self.embedding_dimension
         );
 
-        self.conn.execute(&create_sql, [])
-            .with_context(|| format!("Failed to create vec0 virtual table with dimension {}", self.embedding_dimension))?;
+        self.conn.execute(&create_sql, []).with_context(|| {
+            format!(
+                "Failed to create vec0 virtual table with dimension {}",
+                self.embedding_dimension
+            )
+        })?;
 
         log::info!("向量表创建成功，维度: {}", self.embedding_dimension);
         Ok(())
@@ -203,7 +209,8 @@ impl DatabaseConnection {
             )
             "#;
 
-        self.conn.execute(create_sql, [])
+        self.conn
+            .execute(create_sql, [])
             .with_context(|| "Failed to create chunk_embeddings_fallback table")?;
 
         log::info!("后备表创建成功");
@@ -232,8 +239,6 @@ impl DatabaseConnection {
         &mut self.conn
     }
 
-
-
     /// 开始事务
     pub fn begin_transaction(&mut self) -> Result<()> {
         self.conn.execute("BEGIN TRANSACTION", [])?;
@@ -255,19 +260,20 @@ impl DatabaseConnection {
     /// 初始化BM25相关表
     fn initialize_bm25_tables(&self) -> Result<()> {
         // 创建BM25统计信息表
-        self.conn.execute(
-            r#"
+        self.conn
+            .execute(
+                r#"
             CREATE TABLE IF NOT EXISTS bm25_stats (
                 total_docs INTEGER NOT NULL,
                 avg_doc_length REAL NOT NULL,
                 updated_at TEXT NOT NULL
             )
             "#,
-            [],
-        ).with_context(|| "Failed to create bm25_stats table")?;
+                [],
+            )
+            .with_context(|| "Failed to create bm25_stats table")?;
 
         log::info!("BM25 tables initialized successfully");
         Ok(())
     }
-
 }

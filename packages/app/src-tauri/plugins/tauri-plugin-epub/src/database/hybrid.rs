@@ -1,8 +1,8 @@
 use anyhow::Result;
 use std::collections::HashMap;
 
-use crate::database::{DatabaseConnection, DatabaseSearch, BM25Search};
-use crate::models::{SearchResult, HybridSearchConfig, HybridSearchResult, SearchMode};
+use crate::database::{BM25Search, DatabaseConnection, DatabaseSearch};
+use crate::models::{HybridSearchConfig, HybridSearchResult, SearchMode, SearchResult};
 
 /// 混合搜索实现
 pub struct HybridSearch<'a> {
@@ -31,22 +31,34 @@ impl<'a> HybridSearch<'a> {
     }
 
     /// 纯向量搜索
-    fn vector_only_search(&self, query_embedding: &[f32], limit: usize) -> Result<Vec<SearchResult>> {
+    fn vector_only_search(
+        &self,
+        query_embedding: &[f32],
+        limit: usize,
+    ) -> Result<Vec<SearchResult>> {
         let search = DatabaseSearch::new(self.db);
         search.vector_search(query_embedding, limit)
     }
 
     /// 纯BM25搜索
-    fn bm25_only_search(&self, query: &str, limit: usize, config: &HybridSearchConfig) -> Result<Vec<SearchResult>> {
+    fn bm25_only_search(
+        &self,
+        query: &str,
+        limit: usize,
+        config: &HybridSearchConfig,
+    ) -> Result<Vec<SearchResult>> {
         let bm25_search = BM25Search::new(self.db, config.k1, config.b);
         let bm25_results = bm25_search.search(query, limit)?;
-        
+
         // 转换为SearchResult格式
-        Ok(bm25_results.into_iter().map(|r| {
-            let mut result = r.search_result;
-            result.similarity_score = r.score;
-            result
-        }).collect())
+        Ok(bm25_results
+            .into_iter()
+            .map(|r| {
+                let mut result = r.search_result;
+                result.similarity_score = r.score;
+                result
+            })
+            .collect())
     }
 
     /// 混合搜索
@@ -95,7 +107,10 @@ impl<'a> HybridSearch<'a> {
         let mut all_results: HashMap<i64, SearchResult> = HashMap::new();
 
         // 填充向量搜索结果
-        for (result, norm_score) in vector_results.into_iter().zip(normalized_vector.into_iter()) {
+        for (result, norm_score) in vector_results
+            .into_iter()
+            .zip(normalized_vector.into_iter())
+        {
             vector_map.insert(result.chunk_id, norm_score);
             all_results.insert(result.chunk_id, result);
         }
@@ -113,11 +128,7 @@ impl<'a> HybridSearch<'a> {
             let bm25_score = bm25_map.get(&chunk_id).copied();
 
             // 计算加权合并分数
-            let combined_score = self.calculate_combined_score(
-                vector_score,
-                bm25_score,
-                config,
-            );
+            let combined_score = self.calculate_combined_score(vector_score, bm25_score, config);
 
             hybrid_results.push(HybridSearchResult {
                 combined_score,

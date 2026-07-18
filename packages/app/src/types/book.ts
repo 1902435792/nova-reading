@@ -50,6 +50,8 @@ export interface BookNote {
   style?: HighlightStyle;
   color?: HighlightColor;
   author?: "human" | "ai";
+  /** Human underline that an AI review was generated from. */
+  sourceNoteId?: string | null;
   note: string;
   context?: {
     before: string;
@@ -68,7 +70,11 @@ export interface BooknoteGroup {
   booknotes: BookNote[];
 }
 
-export type WritingMode = "auto" | "horizontal-tb" | "horizontal-rl" | "vertical-rl";
+export type WritingMode =
+  | "auto"
+  | "horizontal-tb"
+  | "horizontal-rl"
+  | "vertical-rl";
 
 export interface BookLayout {
   marginTopPx: number;

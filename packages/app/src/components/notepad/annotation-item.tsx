@@ -12,18 +12,23 @@ import { LogicalPosition } from "@tauri-apps/api/window";
 import { ask } from "@tauri-apps/plugin-dialog";
 import dayjs from "dayjs";
 import { Bot, Lightbulb, X } from "lucide-react";
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
+import { toast } from "sonner";
 
 interface AnnotationItemProps {
   annotation: BookNote;
   selected?: boolean;
   onDelete?: (id: string) => void;
+  onGenerateAiReview?: (annotation: BookNote) => Promise<BookNote>;
+  hasAiReview?: boolean;
 }
 
 export const AnnotationItem = ({
   annotation,
   selected = false,
   onDelete,
+  onGenerateAiReview,
+  hasAiReview = false,
 }: AnnotationItemProps) => {
   const view = useReaderStore((state) => state.view);
   const bookId = useReaderStore((state) => state.bookId);
@@ -39,6 +44,28 @@ export const AnnotationItem = ({
     : HIGHLIGHT_COLOR_HEX.yellow;
   const style = annotation.style || "highlight";
   const isAiAnnotation = annotation.author === "ai";
+  const canGenerateAiReview =
+    !isAiAnnotation &&
+    annotation.style === "underline" &&
+    Boolean(annotation.text?.trim());
+  const [generatingAiReview, setGeneratingAiReview] = useState(false);
+  const aiReviewActionLabel = generatingAiReview
+    ? "AI 书评生成中…"
+    : hasAiReview
+    ? "重新生成 AI 书评"
+    : "AI 书评";
+  const handleGenerateReview = useCallback(async () => {
+    if (!canGenerateAiReview || !onGenerateAiReview || generatingAiReview)
+      return;
+    setGeneratingAiReview(true);
+    try {
+      await onGenerateAiReview(annotation);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "AI 书评生成失败");
+    } finally {
+      setGeneratingAiReview(false);
+    }
+  }, [annotation, canGenerateAiReview, generatingAiReview, onGenerateAiReview]);
 
   const handleClick = useCallback(() => {
     // 原文定位始终保留
@@ -84,6 +111,16 @@ export const AnnotationItem = ({
       try {
         const menu = await Menu.new({
           items: [
+            ...(canGenerateAiReview
+              ? [
+                  {
+                    id: "ai-review",
+                    text: aiReviewActionLabel,
+                    enabled: !generatingAiReview,
+                    action: () => void handleGenerateReview(),
+                  },
+                ]
+              : []),
             {
               id: "delete",
               text: "删除",
@@ -99,7 +136,13 @@ export const AnnotationItem = ({
         console.error("显示菜单失败:", error);
       }
     },
-    [handleNativeDelete]
+    [
+      aiReviewActionLabel,
+      canGenerateAiReview,
+      generatingAiReview,
+      handleGenerateReview,
+      handleNativeDelete,
+    ]
   );
 
   return (
@@ -118,7 +161,10 @@ export const AnnotationItem = ({
       aria-label={`跳转到标注原文：${annotation.text ?? ""}`}
       onClick={handleClick}
       onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
+        if (
+          event.target === event.currentTarget &&
+          (event.key === "Enter" || event.key === " ")
+        ) {
           event.preventDefault();
           handleClick();
         }
@@ -142,7 +188,7 @@ export const AnnotationItem = ({
           {isAiAnnotation && (
             <div className="mb-1.5 flex items-center gap-1 text-primary text-xs">
               <Bot className="size-3.5" />
-              AI 共读
+              {annotation.sourceNoteId ? "AI 书评" : "AI 共读"}
             </div>
           )}
           {annotation.context && (
@@ -217,10 +263,26 @@ export const AnnotationItem = ({
             <span>
               {dayjs(annotation.createdAt).format("YYYY-MM-DD HH:mm:ss")}
             </span>
-            {isAiAnnotation && (
-              <span className="ml-auto text-primary">
-                点击定位原文与阅读地图
-              </span>
+            {canGenerateAiReview ? (
+              <button
+                type="button"
+                className="ml-auto inline-flex items-center gap-1 rounded-md px-2 py-1 font-medium text-primary transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={generatingAiReview}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  void handleGenerateReview();
+                }}
+              >
+                <Bot className="size-3.5" />
+                <span>{aiReviewActionLabel}</span>
+              </button>
+            ) : (
+              isAiAnnotation && (
+                <span className="ml-auto text-primary">
+                  点击定位原文与阅读地图
+                </span>
+              )
             )}
           </div>
         </div>

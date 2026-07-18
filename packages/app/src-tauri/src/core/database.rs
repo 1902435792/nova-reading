@@ -4,6 +4,8 @@ use std::fs;
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
+const RANGE_REQUEST_BUDGET_MIGRATION: &str = "co_reading_range_request_budget_v1";
+
 #[derive(Deserialize, Serialize, Debug)]
 struct DefaultSkill {
     name: String,
@@ -80,11 +82,29 @@ pub(crate) async fn run_migrations(pool: &SqlitePool) -> Result<(), Box<dyn std:
         println!("Migration applied: added 'author' column to book_notes table.");
     }
 
+    let book_note_source = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM pragma_table_info('book_notes') WHERE name='source_note_id'",
+    )
+    .fetch_one(pool)
+    .await?;
+    if book_note_source == 0 {
+        sqlx::query("ALTER TABLE book_notes ADD COLUMN source_note_id TEXT")
+            .execute(pool)
+            .await?;
+        println!("Migration applied: added 'source_note_id' column to book_notes table.");
+    }
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_book_notes_source_note_id ON book_notes(source_note_id) WHERE source_note_id IS NOT NULL",
+    )
+    .execute(pool)
+    .await?;
+
     let co_reading_settings_exists = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='co_reading_settings'",
     )
     .fetch_one(pool)
     .await?;
+
     if co_reading_settings_exists > 0 {
         let mut added_any = false;
         for column in ["model_provider_id", "model_id"] {
@@ -105,6 +125,32 @@ pub(crate) async fn run_migrations(pool: &SqlitePool) -> Result<(), Box<dyn std:
         if added_any {
             println!("Migration applied: added co-reading model preference columns.");
         }
+    }
+
+    let co_reading_blocks_exists = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='co_reading_blocks'",
+    )
+    .fetch_one(pool)
+    .await?;
+    if co_reading_blocks_exists > 0 {
+        let focus_key_exists = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM pragma_table_info('co_reading_blocks') WHERE name='focus_key'",
+        )
+        .fetch_one(pool)
+        .await?;
+        if focus_key_exists == 0 {
+            sqlx::query(
+                "ALTER TABLE co_reading_blocks ADD COLUMN focus_key TEXT NOT NULL DEFAULT ''",
+            )
+            .execute(pool)
+            .await?;
+            sqlx::query("UPDATE co_reading_blocks SET focus_key=block_key WHERE focus_key='' ")
+                .execute(pool)
+                .await?;
+        }
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_co_reading_blocks_focus ON co_reading_blocks(book_id, focus_key, status, unlocked_at)")
+            .execute(pool)
+            .await?;
     }
 
     let range_table_exists = sqlx::query_scalar::<_, i64>(
@@ -130,6 +176,61 @@ pub(crate) async fn run_migrations(pool: &SqlitePool) -> Result<(), Box<dyn std:
                 ))
                 .execute(pool)
                 .await?;
+            }
+        }
+        let request_limit_exists = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM pragma_table_info('co_reading_range_tasks') WHERE name='request_limit'",
+        )
+        .fetch_one(pool)
+        .await?;
+        let status_exists = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM pragma_table_info('co_reading_range_tasks') WHERE name='status'",
+        )
+        .fetch_one(pool)
+        .await?;
+        if request_limit_exists > 0 && status_exists > 0 {
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS deepreader_migrations (name TEXT PRIMARY KEY NOT NULL, applied_at INTEGER NOT NULL)",
+            )
+            .execute(pool)
+            .await?;
+            let already_repaired: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM deepreader_migrations WHERE name=?")
+                    .bind(RANGE_REQUEST_BUDGET_MIGRATION)
+                    .fetch_one(pool)
+                    .await?;
+            if already_repaired == 0 {
+                // One-time compatibility repair for unresolved tasks created before retry
+                // headroom became part of the fixed budget. CASE branches avoid overflowing
+                // SQLite INTEGER arithmetic for malformed legacy extremes.
+                let mut tx = pool.begin().await?;
+                sqlx::query(
+                    r#"
+                    UPDATE co_reading_range_tasks
+                    SET request_limit = MAX(
+                        request_limit,
+                        CASE
+                            WHEN start_index < 0 OR end_index < start_index THEN request_limit
+                            WHEN end_index - start_index > 9223372036854775804 THEN 9223372036854775807
+                            ELSE end_index - start_index + 3
+                        END,
+                        CASE
+                            WHEN request_count >= 9223372036854775805 THEN 9223372036854775807
+                            WHEN request_count < 0 THEN request_limit
+                            ELSE request_count + 2
+                        END
+                    )
+                    WHERE status IN ('running','paused','failed')
+                    "#,
+                )
+                .execute(&mut *tx)
+                .await?;
+                sqlx::query("INSERT INTO deepreader_migrations (name, applied_at) VALUES (?, ?)")
+                    .bind(RANGE_REQUEST_BUDGET_MIGRATION)
+                    .bind(chrono::Utc::now().timestamp_millis())
+                    .execute(&mut *tx)
+                    .await?;
+                tx.commit().await?;
             }
         }
     }
@@ -202,7 +303,7 @@ async fn sync_default_skills(pool: &SqlitePool) -> Result<(), Box<dyn std::error
 
 #[cfg(test)]
 mod tests {
-    use super::run_migrations;
+    use super::{run_migrations, RANGE_REQUEST_BUDGET_MIGRATION};
     use sqlx::sqlite::SqlitePoolOptions;
 
     #[tokio::test]
@@ -237,8 +338,21 @@ mod tests {
             .fetch_one(&pool)
             .await
             .expect("read legacy data");
+        let source_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('book_notes') WHERE name='source_note_id'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("read source note column");
+        let source: Option<String> =
+            sqlx::query_scalar("SELECT source_note_id FROM book_notes WHERE id='old'")
+                .fetch_one(&pool)
+                .await
+                .expect("read migrated source note value");
         assert_eq!(author, "human");
         assert_eq!(note, "kept");
+        assert_eq!(source_count, 1);
+        assert_eq!(source, None);
     }
 
     #[tokio::test]
@@ -433,5 +547,66 @@ mod tests {
         assert_eq!(model_col, 1);
         assert_eq!(provider_id, "provider-1");
         assert_eq!(model_id, "");
+    }
+
+    #[tokio::test]
+    async fn migration_repairs_unresolved_range_budget_once_without_future_growth() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create database");
+        sqlx::query(
+            "CREATE TABLE skills (id TEXT PRIMARY KEY, description TEXT NOT NULL DEFAULT '')",
+        )
+        .execute(&pool)
+        .await
+        .expect("create skills table");
+        sqlx::query(
+            "CREATE TABLE book_notes (id TEXT PRIMARY KEY, note TEXT NOT NULL, author TEXT NOT NULL DEFAULT 'human', source_note_id TEXT)",
+        )
+        .execute(&pool)
+        .await
+        .expect("create book notes");
+        sqlx::query(
+            "CREATE TABLE co_reading_range_tasks (id TEXT PRIMARY KEY, start_index INTEGER NOT NULL, end_index INTEGER NOT NULL, status TEXT NOT NULL, request_limit INTEGER NOT NULL, request_count INTEGER NOT NULL)",
+        )
+        .execute(&pool)
+        .await
+        .expect("create legacy range table");
+        sqlx::query("INSERT INTO co_reading_range_tasks VALUES ('failed', 2, 5, 'failed', 4, 6)")
+            .execute(&pool)
+            .await
+            .expect("insert legacy failed task");
+
+        run_migrations(&pool).await.expect("run first migration");
+        let repaired: (i64, i64) = sqlx::query_as(
+            "SELECT request_limit, request_count FROM co_reading_range_tasks WHERE id='failed'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("read repaired task");
+        assert_eq!(repaired.0, 8);
+        assert!(repaired.0 >= repaired.1 + 2);
+
+        sqlx::query("UPDATE co_reading_range_tasks SET request_count=7 WHERE id='failed'")
+            .execute(&pool)
+            .await
+            .expect("simulate later retry consumption");
+        run_migrations(&pool).await.expect("run migrations again");
+        let unchanged_limit: i64 = sqlx::query_scalar(
+            "SELECT request_limit FROM co_reading_range_tasks WHERE id='failed'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("read stable request limit");
+        let marker_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM deepreader_migrations WHERE name=?")
+                .bind(RANGE_REQUEST_BUDGET_MIGRATION)
+                .fetch_one(&pool)
+                .await
+                .expect("read migration marker");
+        assert_eq!(unchanged_limit, repaired.0);
+        assert_eq!(marker_count, 1);
     }
 }

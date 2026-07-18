@@ -38,22 +38,41 @@ function block(key: string, text: string, hash = key): CoReadingBlockUpsert {
   };
 }
 
-test("range candidate filter rejects short and duplicate text", () => {
+test("range candidate preserves short meaningful text and rejects exact duplicates", () => {
   const seen = new Set<string>();
-  assert.equal(
-    classifyRangeCandidate(block("a", "太短", "same"), seen).status,
-    "filtered"
-  );
+  assert.deepEqual(classifyRangeCandidate(block("a", "太短", "same"), seen), {
+    status: "candidate",
+    reason: null,
+  });
   assert.equal(
     classifyRangeCandidate(
       block(
         "b",
-        "这是一段足够长、包含具体动作和语气变化，值得交给 Nova 继续筛选的候选文本。",
+        "这是一段足够长、包含具体动作和语气变化，值得交给 Nova 继续阅读的文本。",
         "same"
       ),
       seen
     ).reason,
     "重复文本"
+  );
+});
+
+test("range candidate filters only obvious page, navigation, and decorative noise", () => {
+  assert.equal(
+    classifyRangeCandidate(block("page", "第 12 页"), new Set()).reason,
+    "页码"
+  );
+  assert.equal(
+    classifyRangeCandidate(block("nav", "下一页"), new Set()).reason,
+    "导航文字"
+  );
+  assert.equal(
+    classifyRangeCandidate(block("decorative", "—— ❦ ——"), new Set()).reason,
+    "装饰符号"
+  );
+  assert.deepEqual(
+    classifyRangeCandidate(block("heading", "前言"), new Set()),
+    { status: "candidate", reason: null }
   );
 });
 

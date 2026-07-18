@@ -9,8 +9,6 @@ impl TextSanitizer {
         Self
     }
 
-
-
     /// 清理HTML内容，提取纯文本
     pub fn clean_html_content(html: &str) -> String {
         // 移除HTML标签的简单实现
@@ -116,17 +114,13 @@ impl TextSanitizer {
         // 将多个空白字符替换为单个空格
         let re = regex::Regex::new(r"\s+").unwrap();
         let normalized = re.replace_all(text, " ");
-        
+
         // 清理多余的换行
         let re = regex::Regex::new(r"\n\s*\n").unwrap();
         let result = re.replace_all(&normalized, "\n");
-        
+
         result.trim().to_string()
     }
-
-
-
-
 }
 
 impl Default for TextSanitizer {
@@ -141,10 +135,22 @@ mod tests {
 
     #[test]
     fn test_sanitize_filename() {
-        assert_eq!(TextSanitizer::sanitize_filename("normal_file.txt"), "normal_file.txt");
-        assert_eq!(TextSanitizer::sanitize_filename("file/with\\bad:chars"), "file_with_bad_chars");
-        assert_eq!(TextSanitizer::sanitize_filename("file*with?quotes\""), "file_with_quotes_");
-        assert_eq!(TextSanitizer::sanitize_filename("file<with>pipes|"), "file_with_pipes_");
+        assert_eq!(
+            TextSanitizer::sanitize_filename("normal_file.txt"),
+            "normal_file.txt"
+        );
+        assert_eq!(
+            TextSanitizer::sanitize_filename("file/with\\bad:chars"),
+            "file_with_bad_chars"
+        );
+        assert_eq!(
+            TextSanitizer::sanitize_filename("file*with?quotes\""),
+            "file_with_quotes_"
+        );
+        assert_eq!(
+            TextSanitizer::sanitize_filename("file<with>pipes|"),
+            "file_with_pipes_"
+        );
     }
 
     #[test]

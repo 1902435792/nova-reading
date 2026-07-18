@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use rusqlite::params;
 
-use crate::database::{DatabaseConnection};
-use crate::models::{SearchResult};
+use crate::database::DatabaseConnection;
+use crate::models::SearchResult;
 
 /// 数据库搜索管理器
 pub struct DatabaseSearch<'a> {
@@ -16,7 +16,11 @@ impl<'a> DatabaseSearch<'a> {
     }
 
     /// 执行向量相似性搜索
-    pub fn vector_search(&self, query_embedding: &[f32], limit: usize) -> Result<Vec<SearchResult>> {
+    pub fn vector_search(
+        &self,
+        query_embedding: &[f32],
+        limit: usize,
+    ) -> Result<Vec<SearchResult>> {
         if self.db.supports_vector_search() {
             self.vector_search_with_sqlite_vec(query_embedding, limit)
         } else {
@@ -29,7 +33,11 @@ impl<'a> DatabaseSearch<'a> {
     // 移除了未使用的bm25_search, smart_search, search_with_config方法
 
     /// 使用 sqlite-vec 执行向量搜索
-    fn vector_search_with_sqlite_vec(&self, query_embedding: &[f32], limit: usize) -> Result<Vec<SearchResult>> {
+    fn vector_search_with_sqlite_vec(
+        &self,
+        query_embedding: &[f32],
+        limit: usize,
+    ) -> Result<Vec<SearchResult>> {
         // 将查询向量转换为字节格式，按照示例代码的方式
         let query_bytes: Vec<u8> = query_embedding
             .iter()
@@ -55,7 +63,7 @@ impl<'a> DatabaseSearch<'a> {
             JOIN chunk_embeddings ce ON dc.id = ce.chunk_id
             WHERE ce.embedding MATCH ?1 AND k = ?2
             ORDER BY distance ASC
-            "#
+            "#,
         )?;
 
         let rows = stmt.query_map(params![query_bytes, limit], |row| {
@@ -79,7 +87,11 @@ impl<'a> DatabaseSearch<'a> {
     }
 
     /// 后备向量搜索实现（使用余弦相似度计算）
-    fn vector_search_fallback(&self, query_embedding: &[f32], limit: usize) -> Result<Vec<SearchResult>> {
+    fn vector_search_fallback(
+        &self,
+        query_embedding: &[f32],
+        limit: usize,
+    ) -> Result<Vec<SearchResult>> {
         // 获取所有嵌入向量
         let mut stmt = self.db.connection().prepare(
             r#"
@@ -98,15 +110,15 @@ impl<'a> DatabaseSearch<'a> {
                 cef.embedding
             FROM document_chunks dc
             JOIN chunk_embeddings_fallback cef ON dc.id = cef.chunk_id
-            "#
+            "#,
         )?;
 
         let rows = stmt.query_map([], |row| {
             let embedding_bytes: Vec<u8> = row.get(11)?;
             let embedding = self.bytes_to_f32_vec(&embedding_bytes)?;
-            
+
             let similarity = self.cosine_similarity(query_embedding, &embedding);
-            
+
             Ok(SearchResult {
                 chunk_id: row.get(0)?,
                 book_title: row.get(1)?,
@@ -123,18 +135,18 @@ impl<'a> DatabaseSearch<'a> {
         })?;
 
         let mut results: Vec<SearchResult> = rows.collect::<Result<Vec<_>, _>>()?;
-        
+
         // 按相似度排序并限制结果数量
         results.sort_by(|a, b| b.similarity_score.partial_cmp(&a.similarity_score).unwrap());
         results.truncate(limit);
-        
+
         Ok(results)
     }
 
     /// 执行文本搜索
     pub fn text_search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
         let search_pattern = format!("%{}%", query);
-        
+
         let mut stmt = self.db.connection().prepare(
             r#"
             SELECT 
@@ -154,7 +166,7 @@ impl<'a> DatabaseSearch<'a> {
                 file_order_in_book,
                 chunk_order_in_file
             LIMIT ?2
-            "#
+            "#,
         )?;
 
         let rows = stmt.query_map(params![search_pattern, limit], |row| {
@@ -183,16 +195,16 @@ impl<'a> DatabaseSearch<'a> {
             return Err(rusqlite::Error::InvalidColumnType(
                 0,
                 "Invalid embedding byte length".to_string(),
-                rusqlite::types::Type::Blob
+                rusqlite::types::Type::Blob,
             ));
         }
-        
+
         let mut vec = Vec::with_capacity(bytes.len() / 4);
         for chunk in bytes.chunks_exact(4) {
             let float_bytes = [chunk[0], chunk[1], chunk[2], chunk[3]];
             vec.push(f32::from_le_bytes(float_bytes));
         }
-        
+
         Ok(vec)
     }
 
@@ -201,15 +213,15 @@ impl<'a> DatabaseSearch<'a> {
         if a.len() != b.len() {
             return 0.0;
         }
-        
+
         let dot_product: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
         let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
         let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-        
+
         if norm_a == 0.0 || norm_b == 0.0 {
             return 0.0;
         }
-        
+
         (dot_product / (norm_a * norm_b)) as f64
     }
 }
@@ -223,7 +235,7 @@ mod tests {
     fn create_test_db_with_data() -> (DatabaseConnection, i64) {
         let temp_file = NamedTempFile::new().unwrap();
         let mut db = DatabaseConnection::new(temp_file.path(), 384).unwrap();
-        
+
         let chunk = crate::models::DocumentChunk {
             id: None,
             book_title: "Test Book".to_string(),
@@ -237,10 +249,10 @@ mod tests {
             global_chunk_index: 0,
             created_at: "2023-01-01 00:00:00".to_string(),
         };
-        
+
         let mut ops = DatabaseOperations::new(&mut db);
         let chunk_id = ops.insert_chunk(&chunk).unwrap();
-        
+
         (db, chunk_id)
     }
 
@@ -248,10 +260,13 @@ mod tests {
     fn test_text_search() {
         let (db, _) = create_test_db_with_data();
         let search = DatabaseSearch::new(&db);
-        
+
         let results = search.text_search("artificial intelligence", 10).unwrap();
         assert_eq!(results.len(), 1);
-        assert!(results[0].chunk.chunk_text.contains("artificial intelligence"));
+        assert!(results[0]
+            .chunk
+            .chunk_text
+            .contains("artificial intelligence"));
     }
 
     #[test]
@@ -259,12 +274,12 @@ mod tests {
         let temp_file = NamedTempFile::new().unwrap();
         let db = DatabaseConnection::new(temp_file.path(), 384).unwrap();
         let search = DatabaseSearch::new(&db);
-        
+
         let vec1 = vec![1.0, 0.0, 0.0];
         let vec2 = vec![1.0, 0.0, 0.0];
         let similarity = search.cosine_similarity(&vec1, &vec2);
         assert!((similarity - 1.0).abs() < 1e-6);
-        
+
         let vec3 = vec![0.0, 1.0, 0.0];
         let similarity2 = search.cosine_similarity(&vec1, &vec3);
         assert!((similarity2 - 0.0).abs() < 1e-6);
@@ -275,11 +290,11 @@ mod tests {
         let temp_file = NamedTempFile::new().unwrap();
         let db = DatabaseConnection::new(temp_file.path(), 384).unwrap();
         let search = DatabaseSearch::new(&db);
-        
+
         let original = vec![1.0f32, 2.0f32, 3.0f32];
         let bytes: Vec<u8> = original.iter().flat_map(|f| f.to_le_bytes()).collect();
         let recovered = search.bytes_to_f32_vec(&bytes).unwrap();
-        
+
         assert_eq!(original, recovered);
     }
 }

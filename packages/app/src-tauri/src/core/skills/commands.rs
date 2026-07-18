@@ -42,7 +42,14 @@ pub async fn create_skill(app_handle: AppHandle, data: SkillCreateData) -> Resul
     .await
     .map_err(|e| format!("创建技能失败: {}", e))?;
 
-    Ok(Skill::new(skill_id, data.name, data.content, description, is_active, is_system))
+    Ok(Skill::new(
+        skill_id,
+        data.name,
+        data.content,
+        description,
+        is_active,
+        is_system,
+    ))
 }
 
 #[tauri::command]

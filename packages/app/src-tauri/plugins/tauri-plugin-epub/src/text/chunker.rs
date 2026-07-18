@@ -1,5 +1,5 @@
+use crate::text::{TextTokenizer, CHUNK_OVERLAP_RATIO, MAX_CHUNK_TOKENS};
 use anyhow::Result;
-use crate::text::{TextTokenizer, MAX_CHUNK_TOKENS, CHUNK_OVERLAP_RATIO};
 
 /// 文本分块器，负责将长文本分割成适合处理的小块
 pub struct TextChunker {
@@ -17,8 +17,6 @@ impl TextChunker {
     pub fn estimate_tokens(&self, text: &str) -> usize {
         self.tokenizer.estimate_tokens(text)
     }
-
-
 
     /// 按 token 数量和行边界分割文本，带重叠
     pub fn chunk_text_by_tokens(
@@ -115,64 +113,78 @@ impl TextChunker {
 
     /// 专门用于 Markdown 文件的智能分块方法
     /// 考虑 Markdown 格式特性：标题层级、段落边界、代码块等
-    pub fn chunk_md_file(&self, md_content: &str, min_tokens: usize, max_tokens: usize) -> Vec<String> {
+    pub fn chunk_md_file(
+        &self,
+        md_content: &str,
+        min_tokens: usize,
+        max_tokens: usize,
+    ) -> Vec<String> {
         let safe_max_tokens = max_tokens.min(MAX_CHUNK_TOKENS);
-        
+
         // 首先尝试按 Markdown 结构分块
-        if let Some(structured_chunks) = self.chunk_by_markdown_structure(md_content, min_tokens, safe_max_tokens) {
+        if let Some(structured_chunks) =
+            self.chunk_by_markdown_structure(md_content, min_tokens, safe_max_tokens)
+        {
             return structured_chunks;
         }
-        
+
         // 如果结构化分块失败，回退到标准文本分块
         log::debug!("Markdown structured chunking failed, falling back to text chunking");
         self.chunk_text_by_tokens(md_content, min_tokens, safe_max_tokens, 0)
     }
-    
+
     /// 按 Markdown 结构进行智能分块
-    fn chunk_by_markdown_structure(&self, md_content: &str, min_tokens: usize, max_tokens: usize) -> Option<Vec<String>> {
+    fn chunk_by_markdown_structure(
+        &self,
+        md_content: &str,
+        min_tokens: usize,
+        max_tokens: usize,
+    ) -> Option<Vec<String>> {
         let lines: Vec<&str> = md_content.lines().collect();
         if lines.is_empty() {
             return Some(vec![]);
         }
-        
+
         let mut chunks = Vec::new();
         let mut current_section = Vec::new();
         let mut current_tokens = 0;
         let overlap_tokens = (max_tokens as f32 * CHUNK_OVERLAP_RATIO) as usize;
-        
+
         for line in lines.iter() {
             let line = line.trim();
             let line_tokens = self.estimate_tokens(line);
-            
+
             // 检查是否是 Markdown 标题
             let is_header = line.starts_with('#') && line.len() > 1;
-            
+
             // 检查是否达到理想分块大小（75% of max_tokens）
             let approaching_limit = current_tokens >= (max_tokens * 3 / 4);
-            
+
             // 检查行数是否过多（避免过长段落）
             let too_many_lines = current_section.len() >= 50;
-            
+
             // 多种分块触发条件
-            let should_consider_split = (is_header || approaching_limit || too_many_lines) 
-                && !current_section.is_empty() 
+            let should_consider_split = (is_header || approaching_limit || too_many_lines)
+                && !current_section.is_empty()
                 && current_tokens >= min_tokens;
-            
+
             if should_consider_split {
                 // 检查如果添加这个标题会不会超过限制
                 if current_tokens + line_tokens > max_tokens {
                     // 保存当前段落
                     chunks.push(current_section.join("\n"));
-                    
+
                     // 准备重叠内容
-                    let overlap_content = self.prepare_overlap_content(&current_section, overlap_tokens);
+                    let overlap_content =
+                        self.prepare_overlap_content(&current_section, overlap_tokens);
                     current_section = overlap_content;
-                    current_tokens = current_section.iter()
+                    current_tokens = current_section
+                        .iter()
                         .map(|l| self.estimate_tokens(l))
                         .sum();
                 }
             }
-            
+
             // 检查代码块边界
             if line.starts_with("```") && !current_section.is_empty() {
                 // 代码块应该保持完整，如果当前块很大，先分块
@@ -182,25 +194,30 @@ impl TextChunker {
                     current_tokens = 0;
                 }
             }
-            
+
             // 添加当前行
-            if !line.is_empty() || current_section.len() > 0 {  // 保留非空行或作为段落分隔
+            if !line.is_empty() || current_section.len() > 0 {
+                // 保留非空行或作为段落分隔
                 current_section.push(line.to_string());
                 current_tokens += line_tokens;
             }
-            
+
             // 检查是否达到最大 token 限制
             if current_tokens > max_tokens && current_section.len() > 1 {
                 // 需要分块，但尽量在合适的边界
-                if let Some(split_point) = self.find_best_split_point(&current_section, min_tokens, max_tokens) {
+                if let Some(split_point) =
+                    self.find_best_split_point(&current_section, min_tokens, max_tokens)
+                {
                     let chunk_lines = current_section[..split_point].to_vec();
                     chunks.push(chunk_lines.join("\n"));
-                    
+
                     // 准备重叠内容
-                    let overlap_content = self.prepare_overlap_content(&chunk_lines, overlap_tokens);
+                    let overlap_content =
+                        self.prepare_overlap_content(&chunk_lines, overlap_tokens);
                     let remaining_lines = current_section[split_point..].to_vec();
                     current_section = [overlap_content, remaining_lines].concat();
-                    current_tokens = current_section.iter()
+                    current_tokens = current_section
+                        .iter()
                         .map(|l| self.estimate_tokens(l))
                         .sum();
                 } else {
@@ -209,25 +226,29 @@ impl TextChunker {
                     let chunk_lines = current_section[..mid].to_vec();
                     chunks.push(chunk_lines.join("\n"));
                     current_section = current_section[mid..].to_vec();
-                    current_tokens = current_section.iter()
+                    current_tokens = current_section
+                        .iter()
                         .map(|l| self.estimate_tokens(l))
                         .sum();
                 }
             }
         }
-        
+
         // 处理最后一个段落，确保不超过token限制
         if !current_section.is_empty() && current_tokens >= min_tokens.min(50) {
             // 检查是否超过限制，如果超过则需要分割
             if current_tokens > max_tokens && current_section.len() > 1 {
-                if let Some(split_point) = self.find_best_split_point(&current_section, min_tokens, max_tokens) {
+                if let Some(split_point) =
+                    self.find_best_split_point(&current_section, min_tokens, max_tokens)
+                {
                     let chunk_lines = current_section[..split_point].to_vec();
                     chunks.push(chunk_lines.join("\n"));
-                    
+
                     // 处理剩余部分
                     let remaining_lines = current_section[split_point..].to_vec();
                     if !remaining_lines.is_empty() {
-                        let remaining_tokens: usize = remaining_lines.iter()
+                        let remaining_tokens: usize = remaining_lines
+                            .iter()
                             .map(|l| self.estimate_tokens(l))
                             .sum();
                         if remaining_tokens >= min_tokens.min(30) {
@@ -239,7 +260,7 @@ impl TextChunker {
                     let mid = current_section.len() / 2;
                     let chunk_lines = current_section[..mid].to_vec();
                     chunks.push(chunk_lines.join("\n"));
-                    
+
                     let remaining_lines = current_section[mid..].to_vec();
                     if !remaining_lines.is_empty() {
                         chunks.push(remaining_lines.join("\n"));
@@ -249,10 +270,13 @@ impl TextChunker {
                 chunks.push(current_section.join("\n"));
             }
         }
-        
+
         // 过滤掉过短的块，并确保不超过最大token限制
-        let filtered_chunks: Vec<String> = chunks.into_iter()
-            .filter(|chunk| !chunk.trim().is_empty() && self.estimate_tokens(chunk) >= min_tokens.min(30))
+        let filtered_chunks: Vec<String> = chunks
+            .into_iter()
+            .filter(|chunk| {
+                !chunk.trim().is_empty() && self.estimate_tokens(chunk) >= min_tokens.min(30)
+            })
             .flat_map(|chunk| {
                 let chunk_tokens = self.estimate_tokens(&chunk);
                 if chunk_tokens > max_tokens {
@@ -264,7 +288,7 @@ impl TextChunker {
                 }
             })
             .collect();
-        
+
         if filtered_chunks.is_empty() {
             None
         } else {
@@ -273,7 +297,12 @@ impl TextChunker {
     }
 
     /// 寻找最佳的分割点（段落结束、列表项等）
-    fn find_best_split_point(&self, lines: &[String], min_tokens: usize, max_tokens: usize) -> Option<usize> {
+    fn find_best_split_point(
+        &self,
+        lines: &[String],
+        min_tokens: usize,
+        max_tokens: usize,
+    ) -> Option<usize> {
         let mut best_point = None;
         let mut accumulated_tokens = 0;
 
@@ -288,8 +317,8 @@ impl TextChunker {
             // 检查分割点优先级
             // 优先级1：理想分割点（标题、代码块边界）
             let is_ideal_split = line.starts_with('#')               // 标题
-                || line.starts_with("```");                         // 代码块
-            
+                || line.starts_with("```"); // 代码块
+
             // 优先级2：良好分割点（空行、句子结尾）
             let is_good_split = line.trim().is_empty()               // 空行
                 || line.trim().ends_with('.')                       // 英文句号
@@ -297,14 +326,14 @@ impl TextChunker {
                 || line.trim().ends_with('?')                       // 英文问号
                 || line.trim().ends_with('。')                      // 中文句号
                 || line.trim().ends_with('！')                      // 中文感叹号
-                || line.trim().ends_with('？');                     // 中文问号
-            
+                || line.trim().ends_with('？'); // 中文问号
+
             // 优先级3：可接受分割点（列表、引用等）
             let is_acceptable_split = line.starts_with('-')          // 列表项
                 || line.starts_with('*')                            // 列表项  
                 || line.starts_with('>')                            // 引用
                 || line.trim().starts_with(char::is_numeric)        // 数字开头
-                || line.contains("---");                            // 分隔符
+                || line.contains("---"); // 分隔符
 
             // 根据优先级选择分割点
             if is_ideal_split || is_good_split || is_acceptable_split {
@@ -314,12 +343,12 @@ impl TextChunker {
                 if is_ideal_split {
                     break;
                 }
-                
+
                 // 良好分割点：超过理想长度时使用
                 if is_good_split && accumulated_tokens >= max_tokens * 3 / 4 {
                     break;
                 }
-                
+
                 // 可接受分割点：接近最大长度时使用
                 if is_acceptable_split && accumulated_tokens >= max_tokens * 9 / 10 {
                     break;
@@ -340,15 +369,17 @@ impl TextChunker {
         if lines.is_empty() {
             return Vec::new();
         }
-        
+
         // 最小重叠：至少尝试包含一个完整句子
         let min_overlap_tokens = (max_overlap_tokens as f32 * 0.3) as usize; // 30%最小值
-        
+
         // 首先尝试智能边界选择
-        if let Some(smart_overlap) = self.select_smart_overlap_boundary(lines, max_overlap_tokens, min_overlap_tokens) {
+        if let Some(smart_overlap) =
+            self.select_smart_overlap_boundary(lines, max_overlap_tokens, min_overlap_tokens)
+        {
             return smart_overlap;
         }
-        
+
         // 兜底：使用原有的逐行收集逻辑
         let mut overlap_content = Vec::new();
         let mut overlap_tokens = 0;
@@ -365,29 +396,34 @@ impl TextChunker {
 
         overlap_content
     }
-    
+
     /// 智能选择重叠边界，优先选择语义完整的内容
-    fn select_smart_overlap_boundary(&self, lines: &[String], max_overlap_tokens: usize, min_overlap_tokens: usize) -> Option<Vec<String>> {
+    fn select_smart_overlap_boundary(
+        &self,
+        lines: &[String],
+        max_overlap_tokens: usize,
+        min_overlap_tokens: usize,
+    ) -> Option<Vec<String>> {
         // 从末尾开始寻找最佳重叠边界
         let mut best_overlap = None;
         let mut current_tokens = 0;
         let mut current_lines = Vec::new();
-        
+
         for line in lines.iter().rev() {
             let line_tokens = self.estimate_tokens(line);
             let new_total = current_tokens + line_tokens;
-            
+
             // 如果超过最大限制，停止
             if new_total > max_overlap_tokens {
                 break;
             }
-            
+
             current_lines.insert(0, line.clone());
             current_tokens = new_total;
-            
+
             // 检查当前行是否是好的边界点
             let is_good_boundary = self.is_good_overlap_boundary(line);
-            
+
             // 如果是好的边界点且满足最小要求，记录为候选
             if is_good_boundary && current_tokens >= min_overlap_tokens {
                 best_overlap = Some(current_lines.clone());
@@ -397,47 +433,49 @@ impl TextChunker {
                 }
             }
         }
-        
+
         best_overlap
     }
-    
+
     /// 判断是否是好的重叠边界
     fn is_good_overlap_boundary(&self, line: &str) -> bool {
         let trimmed = line.trim();
-        
+
         // 空行是很好的边界
         if trimmed.is_empty() {
             return true;
         }
-        
+
         // 句子结尾是最好的边界
         if self.is_sentence_ending(line) {
             return true;
         }
-        
+
         // 段落开始（标题、列表等）
         if trimmed.starts_with('#') || trimmed.starts_with('-') || trimmed.starts_with('*') {
             return true;
         }
-        
+
         // 数字开头的行（可能是编号段落）
         if trimmed.chars().next().map_or(false, |c| c.is_ascii_digit()) {
             return true;
         }
-        
+
         false
     }
-    
+
     /// 判断是否是句子结尾
     fn is_sentence_ending(&self, line: &str) -> bool {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             return false;
         }
-        
+
         // 中英文句子结尾标点
         let sentence_endings = ['。', '！', '？', '.', '!', '?'];
-        sentence_endings.iter().any(|&ending| trimmed.ends_with(ending))
+        sentence_endings
+            .iter()
+            .any(|&ending| trimmed.ends_with(ending))
     }
 
     /// 将一行很长的文本进一步分割为若干子块，优先按句子，其次按字符带重叠
@@ -539,28 +577,26 @@ impl TextChunker {
             // 单行超长，按字符分割（已有重叠机制）
             return self.split_by_characters(chunk, max_tokens);
         }
-        
+
         let overlap_tokens = (max_tokens as f32 * CHUNK_OVERLAP_RATIO) as usize;
         let mut result = Vec::new();
         let mut current_lines = Vec::new();
         let mut current_tokens = 0;
-        
+
         for line in lines {
             let line_tokens = self.estimate_tokens(line);
-            
+
             // 如果添加这行会超过限制
             if current_tokens + line_tokens > max_tokens && !current_lines.is_empty() {
                 // 保存当前分片
                 result.push(current_lines.join("\n"));
-                
+
                 // 准备重叠内容
                 let overlap_content = self.prepare_overlap_content(&current_lines, overlap_tokens);
                 current_lines = overlap_content;
-                current_tokens = current_lines.iter()
-                    .map(|l| self.estimate_tokens(l))
-                    .sum();
+                current_tokens = current_lines.iter().map(|l| self.estimate_tokens(l)).sum();
             }
-            
+
             // 如果单行就超过限制，需要进一步分割
             if line_tokens > max_tokens {
                 if !current_lines.is_empty() {
@@ -575,11 +611,11 @@ impl TextChunker {
                 current_tokens += line_tokens;
             }
         }
-        
+
         if !current_lines.is_empty() {
             result.push(current_lines.join("\n"));
         }
-        
+
         result
     }
 

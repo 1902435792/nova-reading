@@ -1,21 +1,21 @@
+pub mod bm25;
 pub mod connection;
+pub mod hybrid;
 pub mod operations;
 pub mod search;
-pub mod bm25;
-pub mod hybrid;
 
 // Re-export public types for convenience
+pub use bm25::*;
 pub use connection::*;
+pub use hybrid::*;
 pub use operations::*;
 pub use search::*;
-pub use bm25::*;
-pub use hybrid::*;
 
 // Backward compatibility wrapper
-use anyhow::{Result};
-use std::path::Path;
-use rusqlite::params;
 use crate::models::{DocumentChunk, SearchResult};
+use anyhow::Result;
+use rusqlite::params;
+use std::path::Path;
 
 /// 向量数据库包装器，提供向后兼容的API
 pub struct VectorDatabase {
@@ -35,18 +35,12 @@ impl VectorDatabase {
         Ok(Self { db })
     }
 
-
-
-
-
     /// 初始化向量表（向后兼容）
     pub fn initialize_vec_table(&mut self) -> Result<()> {
         // 在新的模块化设计中，表初始化在 DatabaseConnection::new 中自动完成
         // 这个方法保留用于向后兼容
         Ok(())
     }
-
-
 
     /// 批量插入文档块
     pub fn insert_chunks_batch(&mut self, chunks: &[DocumentChunk]) -> Result<Vec<i64>> {
@@ -55,7 +49,11 @@ impl VectorDatabase {
     }
 
     /// 执行向量相似性搜索
-    pub fn vector_search(&self, query_embedding: &[f32], limit: usize) -> Result<Vec<SearchResult>> {
+    pub fn vector_search(
+        &self,
+        query_embedding: &[f32],
+        limit: usize,
+    ) -> Result<Vec<SearchResult>> {
         let search = DatabaseSearch::new(&self.db);
         search.vector_search(query_embedding, limit)
     }
@@ -79,14 +77,15 @@ impl VectorDatabase {
         let bm25_results = bm25_search.search(query, limit)?;
 
         // 转换为SearchResult格式
-        Ok(bm25_results.into_iter().map(|r| {
-            let mut result = r.search_result;
-            result.similarity_score = r.score;
-            result
-        }).collect())
+        Ok(bm25_results
+            .into_iter()
+            .map(|r| {
+                let mut result = r.search_result;
+                result.similarity_score = r.score;
+                result
+            })
+            .collect())
     }
-
-
 
     // 移除了未使用的search_similar方法
 
@@ -105,12 +104,12 @@ impl VectorDatabase {
                 if let Some(embedding) = query_embedding {
                     self.vector_search(embedding, limit)
                 } else {
-                    Err(anyhow::anyhow!("Vector embedding required for vector-only search"))
+                    Err(anyhow::anyhow!(
+                        "Vector embedding required for vector-only search"
+                    ))
                 }
             }
-            SearchMode::BM25Only => {
-                self.bm25_search(query, limit)
-            }
+            SearchMode::BM25Only => self.bm25_search(query, limit),
             SearchMode::Hybrid => {
                 if let Some(embedding) = query_embedding {
                     self.hybrid_search(query, embedding, limit, config)
@@ -134,11 +133,11 @@ impl VectorDatabase {
             params![chunk_id],
             |row| row.get(0),
         )?;
-        
+
         // 计算范围
         let start_index = (target_global_index - prev_count as i64).max(0);
         let end_index = target_global_index + next_count as i64;
-        
+
         // 查询范围内的所有分块
         let mut stmt = self.db.connection().prepare(
             r#"
@@ -149,7 +148,7 @@ impl VectorDatabase {
             FROM document_chunks 
             WHERE global_chunk_index BETWEEN ?1 AND ?2
             ORDER BY global_chunk_index
-            "#
+            "#,
         )?;
 
         let rows = stmt.query_map(params![start_index, end_index], |row| {
@@ -173,22 +172,29 @@ impl VectorDatabase {
     }
 
     /// 基于章节标题搜索分块（向后兼容）
-    pub fn search_chunks_by_chapter(&self, chapter_query: &str, limit: usize) -> Result<Vec<DocumentChunk>> {
+    pub fn search_chunks_by_chapter(
+        &self,
+        chapter_query: &str,
+        limit: usize,
+    ) -> Result<Vec<DocumentChunk>> {
         let search = DatabaseSearch::new(&self.db);
         let results = search.text_search(chapter_query, limit)?;
-        Ok(results.into_iter().map(|r| DocumentChunk {
-            id: Some(r.chunk_id),
-            book_title: r.book_title,
-            book_author: r.book_author,
-            md_file_path: r.md_file_path,
-            file_order_in_book: r.file_order_in_book,
-            related_chapter_titles: r.related_chapter_titles,
-            chunk_text: r.chunk_text,
-            chunk_order_in_file: r.chunk_order_in_file,
-            total_chunks_in_file: r.total_chunks_in_file,
-            global_chunk_index: r.global_chunk_index,
-            embedding: Vec::new(),
-        }).collect())
+        Ok(results
+            .into_iter()
+            .map(|r| DocumentChunk {
+                id: Some(r.chunk_id),
+                book_title: r.book_title,
+                book_author: r.book_author,
+                md_file_path: r.md_file_path,
+                file_order_in_book: r.file_order_in_book,
+                related_chapter_titles: r.related_chapter_titles,
+                chunk_text: r.chunk_text,
+                chunk_order_in_file: r.chunk_order_in_file,
+                total_chunks_in_file: r.total_chunks_in_file,
+                global_chunk_index: r.global_chunk_index,
+                embedding: Vec::new(),
+            })
+            .collect())
     }
 
     /// 通过章节标题精确获取所有相关分块（向后兼容）
@@ -196,12 +202,14 @@ impl VectorDatabase {
         self.search_chunks_by_chapter(chapter_title, 100)
     }
 
-
-
     /// 根据全局分块索引范围获取分块（向后兼容）
-    pub fn get_chunks_by_global_index_range(&self, start_index: usize, end_index: usize) -> Result<Vec<DocumentChunk>> {
-        use rusqlite::params;
+    pub fn get_chunks_by_global_index_range(
+        &self,
+        start_index: usize,
+        end_index: usize,
+    ) -> Result<Vec<DocumentChunk>> {
         use anyhow::Context;
+        use rusqlite::params;
 
         let mut stmt = self.db.connection().prepare(
             r#"
@@ -238,7 +246,4 @@ impl VectorDatabase {
 
         Ok(results)
     }
-
 }
-
-

@@ -8,8 +8,8 @@ pub struct DocumentChunk {
     pub book_author: String,
 
     // 文件信息
-    pub md_file_path: String,        // MD文件路径 "text/part001.md"
-    pub file_order_in_book: u32,     // 文件在书中的顺序
+    pub md_file_path: String,    // MD文件路径 "text/part001.md"
+    pub file_order_in_book: u32, // 文件在书中的顺序
 
     // 章节关联信息（使用 | 分隔符）
     pub related_chapter_titles: String, // "第一章 引言|1.1 背景介绍|1.2 研究目标"
@@ -23,7 +23,7 @@ pub struct DocumentChunk {
     pub embedding: Vec<f32>,
 
     // 全局位置信息
-    pub global_chunk_index: usize,   // 在整本书中的全局分块序号
+    pub global_chunk_index: usize, // 在整本书中的全局分块序号
 }
 
 /// 搜索结果数据结构

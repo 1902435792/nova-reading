@@ -4,12 +4,14 @@ use std::path::Path;
 
 use crate::database::VectorDatabase;
 use crate::epub::EpubReader;
-use crate::text::{TextVectorizer, MAX_CHUNK_TOKENS, MIN_CHUNK_TOKENS};
-use crate::epub::{parse_toc_file, find_toc_ncx_in_mdbook, parse_nav_md_file, find_nav_md_in_mdbook, flatten_toc};
-use crate::models::{
-    DocumentChunk, EpubContent, ProcessOptions, ProcessReport, ProgressUpdate,
-    ErrorStats, VectorizerConfig, BookMetadataFile, AuthorField, FlatTocNode
+use crate::epub::{
+    find_nav_md_in_mdbook, find_toc_ncx_in_mdbook, flatten_toc, parse_nav_md_file, parse_toc_file,
 };
+use crate::models::{
+    AuthorField, BookMetadataFile, DocumentChunk, EpubContent, ErrorStats, FlatTocNode,
+    ProcessOptions, ProcessReport, ProgressUpdate, VectorizerConfig,
+};
+use crate::text::{TextVectorizer, MAX_CHUNK_TOKENS, MIN_CHUNK_TOKENS};
 use epub2mdbook::convert_epub_to_mdbook;
 
 /// Core pipeline: book_dir -> locate book.epub -> parse -> write chapters -> vectorize -> persist to SQLite
@@ -27,7 +29,8 @@ where
 
     if !epub_path.exists() {
         log::error!("EPUB file not found at path: {:?}", epub_path);
-        log::error!("Book directory contents: {:?}", 
+        log::error!(
+            "Book directory contents: {:?}",
             std::fs::read_dir(book_dir)
                 .map(|entries| entries.collect::<Result<Vec<_>, _>>())
                 .unwrap_or_else(|e| Err(e))
@@ -35,11 +38,14 @@ where
         anyhow::bail!("EPUB not found: {:?}", epub_path);
     }
 
-    log::info!("Starting EPUB processing pipeline for book directory: {:?}", book_dir);
+    log::info!(
+        "Starting EPUB processing pipeline for book directory: {:?}",
+        book_dir
+    );
     log::info!("Reading EPUB: {:?}", epub_path);
-    let reader = EpubReader::new()
-        .with_context(|| "Failed to initialize EPUB reader")?;
-    let epub_content = reader.read_epub(&epub_path)
+    let reader = EpubReader::new().with_context(|| "Failed to initialize EPUB reader")?;
+    let epub_content = reader
+        .read_epub(&epub_path)
         .with_context(|| format!("Failed to read EPUB file: {:?}", epub_path))?;
 
     log::info!(
@@ -84,14 +90,14 @@ where
 
     // Step 2: Parse and flatten TOC (支持 nav.md 和 toc.ncx)
     log::info!("Parsing TOC structure...");
-    
+
     // 优先查找 nav.md (EPUB 3)，找不到再找 toc.ncx (EPUB 2)
     let toc_path = find_nav_md_in_mdbook(&mdbook_dir)
         .or_else(|| find_toc_ncx_in_mdbook(&mdbook_dir))
         .context("Neither nav.md nor toc.ncx found in MDBook directory")?;
 
     log::info!("Found TOC file at: {:?}", toc_path);
-    
+
     // 根据文件扩展名选择解析器
     let toc_nodes = if toc_path.extension().and_then(|s| s.to_str()) == Some("md") {
         log::info!("Using nav.md parser (EPUB 3)");
@@ -99,8 +105,7 @@ where
             .map_err(|e| anyhow::anyhow!("Failed to parse nav.md: {}", e))?
     } else {
         log::info!("Using toc.ncx parser (EPUB 2)");
-        parse_toc_file(&toc_path)
-            .map_err(|e| anyhow::anyhow!("Failed to parse toc.ncx: {}", e))?
+        parse_toc_file(&toc_path).map_err(|e| anyhow::anyhow!("Failed to parse toc.ncx: {}", e))?
     };
 
     let flat_toc = flatten_toc(&toc_nodes);
@@ -116,7 +121,8 @@ where
         let safe_title = sanitize_filename(&chapter.title);
         let filename = format!("{:03}-{}.txt", chapter.order + 1, safe_title);
         let path = chapters_dir.join(filename);
-        fs::write(&path, &chapter.content).with_context(|| format!("Failed to write chapter: {:?}", path))?;
+        fs::write(&path, &chapter.content)
+            .with_context(|| format!("Failed to write chapter: {:?}", path))?;
     }
     log::info!(
         "章节落盘完成：写入目录 {:?}，章节数 {}",
@@ -129,7 +135,8 @@ where
     log::info!("Processing MD files for chunking (dedup by md_src)...");
 
     // 获取toc.ncx文件所在的目录，MD文件路径都是相对于它的
-    let toc_base_dir = toc_path.parent()
+    let toc_base_dir = toc_path
+        .parent()
         .ok_or_else(|| anyhow::anyhow!("Cannot get parent directory of TOC file"))?;
 
     // Step 2.5: Write metadata.md combining metadata.json and TOC summary
@@ -140,9 +147,13 @@ where
     }
 
     // 构建 md_src -> 该文件相关的 TOC 节点列表（包含其在全局扁平 TOC 中的索引）
-    let mut md_groups: std::collections::BTreeMap<String, Vec<(usize, FlatTocNode)>> = std::collections::BTreeMap::new();
+    let mut md_groups: std::collections::BTreeMap<String, Vec<(usize, FlatTocNode)>> =
+        std::collections::BTreeMap::new();
     for (idx, n) in flat_toc.iter().cloned().enumerate() {
-        md_groups.entry(n.md_src.clone()).or_default().push((idx, n));
+        md_groups
+            .entry(n.md_src.clone())
+            .or_default()
+            .push((idx, n));
     }
 
     // 预先计算总文件数用于进度报告
@@ -150,20 +161,30 @@ where
     log::info!("准备处理 {} 个MD文件", total_files);
 
     // 统一使用真实/本地 API 向量化器 (提前初始化，复用连接)
-    log::info!("Initializing text vectorizer with config: embeddings_url={}, model_name={}, api_key={}",
+    log::info!(
+        "Initializing text vectorizer with config: embeddings_url={}, model_name={}, api_key={}",
         opts.vectorizer.embeddings_url,
         opts.vectorizer.model_name,
-        if opts.vectorizer.api_key.is_some() { "***" } else { "None" }
+        if opts.vectorizer.api_key.is_some() {
+            "***"
+        } else {
+            "None"
+        }
     );
     let mut vectorizer = TextVectorizer::new(opts.vectorizer.clone())
         .await
-        .with_context(|| format!("Failed to initialize text vectorizer with embeddings_url: {}, model: {}",
-            opts.vectorizer.embeddings_url, opts.vectorizer.model_name))?;
+        .with_context(|| {
+            format!(
+                "Failed to initialize text vectorizer with embeddings_url: {}, model: {}",
+                opts.vectorizer.embeddings_url, opts.vectorizer.model_name
+            )
+        })?;
     log::info!("Text vectorizer initialized successfully");
 
     // 检测实际的向量维度
     log::info!("检测向量维度...");
-    let actual_dimension = vectorizer.detect_embedding_dimension()
+    let actual_dimension = vectorizer
+        .detect_embedding_dimension()
         .await
         .with_context(|| "Failed to detect embedding dimension")?;
     log::info!("检测到实际向量维度: {}", actual_dimension);
@@ -179,9 +200,17 @@ where
     }
 
     // 使用检测到的维度创建数据库
-    log::info!("Opening vector database at: {:?} with dimension: {}", db_path, actual_dimension);
-    let mut db = VectorDatabase::new(&db_path, actual_dimension)
-        .with_context(|| format!("Failed to open/create database at {:?} with dimension {}", db_path, actual_dimension))?;
+    log::info!(
+        "Opening vector database at: {:?} with dimension: {}",
+        db_path,
+        actual_dimension
+    );
+    let mut db = VectorDatabase::new(&db_path, actual_dimension).with_context(|| {
+        format!(
+            "Failed to open/create database at {:?} with dimension {}",
+            db_path, actual_dimension
+        )
+    })?;
     log::info!("Vector database opened successfully");
     if let Err(e) = db.initialize_vec_table() {
         log::warn!(
@@ -204,16 +233,15 @@ where
     for (file_index, (md_src, nodes)) in md_groups.iter().enumerate() {
         let md_file_path = toc_base_dir.join(&md_src);
         if !md_file_path.exists() {
-            log::warn!("MD file not found: {:?} (relative to TOC: {}), skipping", md_file_path, md_src);
+            log::warn!(
+                "MD file not found: {:?} (relative to TOC: {}), skipping",
+                md_file_path,
+                md_src
+            );
             continue;
         }
 
-        log::info!(
-            "处理文件 {}/{}: {} ",
-            file_index + 1,
-            total_files,
-            md_src
-        );
+        log::info!("处理文件 {}/{}: {} ", file_index + 1, total_files, md_src);
 
         let md_content = match fs::read_to_string(&md_file_path) {
             Ok(content) => content,
@@ -252,7 +280,7 @@ where
             // 收集所有相关节点的标题，按play_order排序
             let mut sorted_nodes = related_toc_nodes.clone();
             sorted_nodes.sort_by_key(|node| node.play_order);
-            
+
             // 连接所有章节标题
             sorted_nodes
                 .iter()
@@ -274,7 +302,9 @@ where
         let mut file_batch: Option<Vec<DocumentChunk>> = None;
         // 以“等长估计”给每个 chunk 一个起始位置，用于分配区间
         for (chunk_index, chunk_content) in chunks.into_iter().enumerate() {
-            if chunk_content.trim().is_empty() { continue; }
+            if chunk_content.trim().is_empty() {
+                continue;
+            }
 
             // 立即向量化和处理这个分片
             log::debug!(
@@ -287,7 +317,12 @@ where
             let embedding = match vectorizer.vectorize_text(&chunk_content).await {
                 Ok(emb) => emb,
                 Err(e) => {
-                    log::error!("向量化失败 (文件: {}, 分片: {}): {}", md_src, chunk_index, e);
+                    log::error!(
+                        "向量化失败 (文件: {}, 分片: {}): {}",
+                        md_src,
+                        chunk_index,
+                        e
+                    );
                     error_stats.add_chunk_error();
                     continue; // 跳过这个分片，继续处理其他分片
                 }
@@ -323,7 +358,10 @@ where
                     log::error!("批量入库失败 (文件: {}): {}", md_src, e);
                     error_stats.add_db_error();
                 } else {
-                    log::debug!("批量入库成功：{} 个分片", file_batch.as_ref().unwrap().len());
+                    log::debug!(
+                        "批量入库成功：{} 个分片",
+                        file_batch.as_ref().unwrap().len()
+                    );
                 }
                 total_processed_chunks += file_batch.as_ref().unwrap().len();
                 file_batch = Some(Vec::new());
@@ -331,8 +369,10 @@ where
 
             // 发送进度更新
             if let Some(cb) = on_progress.as_mut() {
-                let file_progress = ((chunk_index + 1) as f32 / total_chunks_in_file as f32) * 100.0;
-                let overall_progress = ((file_index as f32 + file_progress / 100.0) / total_files as f32) * 100.0;
+                let file_progress =
+                    ((chunk_index + 1) as f32 / total_chunks_in_file as f32) * 100.0;
+                let overall_progress =
+                    ((file_index as f32 + file_progress / 100.0) / total_files as f32) * 100.0;
 
                 // 估算总分片数：已处理的分片数 + 当前文件剩余分片数 + 剩余文件的估算分片数
                 let remaining_chunks_in_current_file = total_chunks_in_file - (chunk_index + 1);
@@ -342,7 +382,11 @@ where
                 } else {
                     total_chunks_in_file
                 };
-                let estimated_total = total_processed_chunks + chunk_index + 1 + remaining_chunks_in_current_file + (remaining_files * estimated_chunks_per_file);
+                let estimated_total = total_processed_chunks
+                    + chunk_index
+                    + 1
+                    + remaining_chunks_in_current_file
+                    + (remaining_files * estimated_chunks_per_file);
 
                 cb(ProgressUpdate {
                     current: total_processed_chunks + chunk_index + 1,
@@ -376,7 +420,10 @@ where
     }
 
     // 报告错误统计
-    if error_stats.failed_files > 0 || error_stats.failed_chunks > 0 || error_stats.failed_db_operations > 0 {
+    if error_stats.failed_files > 0
+        || error_stats.failed_chunks > 0
+        || error_stats.failed_db_operations > 0
+    {
         log::warn!(
             "处理过程中遇到错误：{} 个文件失败，{} 个分片失败，{} 个数据库操作失败",
             error_stats.failed_files,
@@ -392,7 +439,10 @@ where
         }
     }
 
-    log::info!("流水线处理完成：共计 {} 个分片已处理", total_processed_chunks);
+    log::info!(
+        "流水线处理完成：共计 {} 个分片已处理",
+        total_processed_chunks
+    );
 
     Ok(ProcessReport {
         db_path,
@@ -420,11 +470,15 @@ pub async fn search_db_with_mode<P: AsRef<Path>>(
 
     // 检查数据库文件是否存在
     if !db_path.exists() {
-        return Err(anyhow::anyhow!("数据库文件不存在: {:?}，请先对书籍进行向量化处理", db_path));
+        return Err(anyhow::anyhow!(
+            "数据库文件不存在: {:?}，请先对书籍进行向量化处理",
+            db_path
+        ));
     }
 
     // 解析搜索模式
-    let mode = search_mode.parse::<crate::models::SearchMode>()
+    let mode = search_mode
+        .parse::<crate::models::SearchMode>()
         .unwrap_or(crate::models::SearchMode::Hybrid);
 
     // 创建搜索配置（使用简化的配置管理器）
@@ -443,15 +497,17 @@ pub async fn search_db_with_mode<P: AsRef<Path>>(
             log::info!("执行BM25搜索: {}", db_path.display());
 
             // 使用默认维度打开数据库（BM25不需要向量）
-            let db = VectorDatabase::open_for_search(&db_path, 1024)
-                .context("Open database failed")?;
+            let db =
+                VectorDatabase::open_for_search(&db_path, 1024).context("Open database failed")?;
 
             db.search_with_mode(query, None, limit, &config)
         }
         _ => {
             // 需要向量化的模式
             let mut v = TextVectorizer::new(vectorizer).await?;
-            let actual_dimension = v.detect_embedding_dimension().await
+            let actual_dimension = v
+                .detect_embedding_dimension()
+                .await
                 .context("Failed to detect embedding dimension")?;
 
             log::info!("检测到向量维度: {}", actual_dimension);
@@ -489,10 +545,19 @@ fn sanitize_filename(name: &str) -> String {
         s.truncate(end);
     }
 
-    if s.trim().is_empty() { "chapter".to_string() } else { s }
+    if s.trim().is_empty() {
+        "chapter".to_string()
+    } else {
+        s
+    }
 }
 
-fn write_metadata_markdown(book_dir: &Path, epub_content: &EpubContent, flat_toc: &[FlatTocNode], toc_base_dir: &Path) -> Result<()> {
+fn write_metadata_markdown(
+    book_dir: &Path,
+    epub_content: &EpubContent,
+    flat_toc: &[FlatTocNode],
+    toc_base_dir: &Path,
+) -> Result<()> {
     // Try read metadata.json from book_dir
     let metadata_path = book_dir.join("metadata.json");
     let meta_file: Option<BookMetadataFile> = match fs::read_to_string(&metadata_path) {
@@ -519,15 +584,28 @@ fn write_metadata_markdown(book_dir: &Path, epub_content: &EpubContent, flat_toc
             AuthorField::Person(p) => p.name.clone().unwrap_or_default(),
             AuthorField::List(list) => {
                 let names: Vec<String> = list.iter().filter_map(|p| p.name.clone()).collect();
-                if names.is_empty() { String::new() } else { names.join("、") }
+                if names.is_empty() {
+                    String::new()
+                } else {
+                    names.join("、")
+                }
             }
             AuthorField::String(s) => s.clone(),
         })
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| epub_content.author.clone());
-    let language = meta_file.as_ref().and_then(|m| m.language.clone()).unwrap_or_else(|| "".to_string());
-    let published = meta_file.as_ref().and_then(|m| m.published.clone()).unwrap_or_else(|| "".to_string());
-    let publisher = meta_file.as_ref().and_then(|m| m.publisher.clone()).unwrap_or_else(|| "".to_string());
+    let language = meta_file
+        .as_ref()
+        .and_then(|m| m.language.clone())
+        .unwrap_or_else(|| "".to_string());
+    let published = meta_file
+        .as_ref()
+        .and_then(|m| m.published.clone())
+        .unwrap_or_else(|| "".to_string());
+    let publisher = meta_file
+        .as_ref()
+        .and_then(|m| m.publisher.clone())
+        .unwrap_or_else(|| "".to_string());
 
     let mut md = String::new();
     md.push_str(&format!("# {}\n\n", title));
@@ -560,17 +638,36 @@ fn write_metadata_markdown(book_dir: &Path, epub_content: &EpubContent, flat_toc
     // Update metadata.json with base_dir
     let updated_metadata = BookMetadataFile {
         title: Some(title),
-        language: if language.is_empty() { None } else { Some(language) },
-        published: if published.is_empty() { None } else { Some(published) },
-        publisher: if publisher.is_empty() { None } else { Some(publisher) },
-        author: meta_file.as_ref().and_then(|m| m.author.clone()).or_else(|| {
-            if epub_content.author.is_empty() { None } else { Some(AuthorField::String(epub_content.author.clone())) }
-        }),
+        language: if language.is_empty() {
+            None
+        } else {
+            Some(language)
+        },
+        published: if published.is_empty() {
+            None
+        } else {
+            Some(published)
+        },
+        publisher: if publisher.is_empty() {
+            None
+        } else {
+            Some(publisher)
+        },
+        author: meta_file
+            .as_ref()
+            .and_then(|m| m.author.clone())
+            .or_else(|| {
+                if epub_content.author.is_empty() {
+                    None
+                } else {
+                    Some(AuthorField::String(epub_content.author.clone()))
+                }
+            }),
         base_dir: Some(toc_base_dir.to_string_lossy().to_string()),
     };
 
-    let metadata_json = serde_json::to_string_pretty(&updated_metadata)
-        .context("Failed to serialize metadata")?;
+    let metadata_json =
+        serde_json::to_string_pretty(&updated_metadata).context("Failed to serialize metadata")?;
     fs::write(&metadata_path, metadata_json)
         .with_context(|| format!("写入 metadata.json 失败: {:?}", metadata_path))?;
 

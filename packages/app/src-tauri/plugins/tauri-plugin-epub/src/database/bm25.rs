@@ -3,7 +3,7 @@ use rusqlite::params;
 use std::collections::HashMap;
 
 use crate::database::DatabaseConnection;
-use crate::models::{SearchResult, BM25Stats, BM25SearchResult};
+use crate::models::{BM25SearchResult, BM25Stats, SearchResult};
 
 /// BM25搜索实现
 pub struct BM25Search<'a> {
@@ -31,7 +31,7 @@ impl<'a> BM25Search<'a> {
 
         // 3. 计算每个文档的BM25分数
         let mut scores: HashMap<i64, f32> = HashMap::new();
-        
+
         for term in &query_terms {
             let term_scores = self.calculate_term_scores(term, &stats)?;
             for (chunk_id, score) in term_scores {
@@ -49,7 +49,8 @@ impl<'a> BM25Search<'a> {
 
         // 6. 获取完整的搜索结果
         let mut results = Vec::new();
-        for ((chunk_id, _), normalized_score) in scored_chunks.iter().zip(normalized_scores.iter()) {
+        for ((chunk_id, _), normalized_score) in scored_chunks.iter().zip(normalized_scores.iter())
+        {
             if let Ok(search_result) = self.get_search_result_by_id(*chunk_id) {
                 results.push(BM25SearchResult {
                     score: *normalized_score,
@@ -104,7 +105,7 @@ impl<'a> BM25Search<'a> {
     /// 从缓存获取统计信息
     fn get_cached_stats(&self) -> Result<BM25Stats> {
         let mut stmt = self.db.connection().prepare(
-            "SELECT total_docs, avg_doc_length FROM bm25_stats ORDER BY updated_at DESC LIMIT 1"
+            "SELECT total_docs, avg_doc_length FROM bm25_stats ORDER BY updated_at DESC LIMIT 1",
         )?;
 
         stmt.query_row([], |row| {
@@ -112,7 +113,8 @@ impl<'a> BM25Search<'a> {
                 total_docs: row.get::<_, i64>(0)? as usize,
                 avg_doc_length: row.get::<_, f64>(1)? as f32,
             })
-        }).context("No cached BM25 stats found")
+        })
+        .context("No cached BM25 stats found")
     }
 
     /// 缓存统计信息
@@ -141,14 +143,14 @@ impl<'a> BM25Search<'a> {
             WHERE LOWER(chunk_text) LIKE ?1
                OR LOWER(related_chapter_titles) LIKE ?1
                OR LOWER(book_title) LIKE ?1
-            "#
+            "#,
         )?;
 
         let search_pattern = format!("%{}%", term);
         let rows = stmt.query_map(params![search_pattern], |row| {
             Ok((
-                row.get::<_, i64>(0)?,      // chunk_id
-                row.get::<_, String>(1)?,   // chunk_text
+                row.get::<_, i64>(0)?,          // chunk_id
+                row.get::<_, String>(1)?,       // chunk_text
                 row.get::<_, i64>(2)? as usize, // doc_length
             ))
         })?;
@@ -184,37 +186,44 @@ impl<'a> BM25Search<'a> {
     fn calculate_term_frequency(&self, term: &str, text: &str) -> usize {
         let text_lower = text.to_lowercase();
         let term_lower = term.to_lowercase();
-        
+
         // 简单的词频计算（可以优化为更精确的分词）
         text_lower.matches(&term_lower).count()
     }
 
     /// 计算BM25分数
-    fn calculate_bm25_score(&self, tf: usize, doc_length: usize, avg_doc_length: f32, idf: f32) -> f32 {
+    fn calculate_bm25_score(
+        &self,
+        tf: usize,
+        doc_length: usize,
+        avg_doc_length: f32,
+        idf: f32,
+    ) -> f32 {
         let tf_f32 = tf as f32;
         let doc_length_f32 = doc_length as f32;
-        
+
         let numerator = tf_f32 * (self.k1 + 1.0);
-        let denominator = tf_f32 + self.k1 * (1.0 - self.b + self.b * (doc_length_f32 / avg_doc_length));
-        
+        let denominator =
+            tf_f32 + self.k1 * (1.0 - self.b + self.b * (doc_length_f32 / avg_doc_length));
+
         idf * (numerator / denominator)
     }
-    
+
     /// 将BM25分数归一化到[0,1]区间
     fn normalize_bm25_scores(&self, scored_chunks: &[(i64, f32)]) -> Vec<f32> {
         if scored_chunks.is_empty() {
             return Vec::new();
         }
-        
+
         let scores: Vec<f32> = scored_chunks.iter().map(|(_, score)| *score).collect();
         let min_score = scores.iter().fold(f32::INFINITY, |a, &b| a.min(b));
         let max_score = scores.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
-        
+
         // 如果所有分数相同，返回均匀的高分
         if (max_score - min_score).abs() < f32::EPSILON {
             return vec![1.0; scores.len()];
         }
-        
+
         // Min-Max归一化到[0,1]区间
         scores
             .into_iter()
@@ -232,7 +241,7 @@ impl<'a> BM25Search<'a> {
                 total_chunks_in_file, global_chunk_index, created_at
             FROM document_chunks 
             WHERE id = ?1
-            "#
+            "#,
         )?;
 
         stmt.query_row(params![chunk_id], |row| {
@@ -249,6 +258,7 @@ impl<'a> BM25Search<'a> {
                 global_chunk_index: row.get(9)?,
                 similarity_score: 1.0, // BM25分数将在外层设置
             })
-        }).context("Failed to get search result by chunk_id")
+        })
+        .context("Failed to get search result by chunk_id")
     }
 }

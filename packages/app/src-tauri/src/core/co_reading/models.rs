@@ -21,6 +21,7 @@ pub struct CoReadingBlock {
     pub id: String,
     pub book_id: String,
     pub block_key: String,
+    pub focus_key: String,
     pub section_index: i64,
     pub section_label: String,
     pub cfi: String,
@@ -75,6 +76,7 @@ pub struct CoReadingBlockUpsert {
     pub id: String,
     pub book_id: String,
     pub block_key: String,
+    pub focus_key: String,
     pub section_index: i64,
     pub section_label: String,
     pub cfi: String,
@@ -101,8 +103,53 @@ pub struct CompleteCoReadingBatchData {
     pub decision: Option<String>,
     pub annotation_id: Option<String>,
     pub annotated_block_key: Option<String>,
+    /// Optional per-block annotation mapping for a page/spread with multiple reviews.
+    pub annotations: Option<std::collections::HashMap<String, String>>,
     pub error: Option<String>,
     pub rolling_summary: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CoReadingNoteCreateData {
+    pub id: String,
+    pub block_key: String,
+    pub r#type: String,
+    pub cfi: String,
+    pub text: Option<String>,
+    pub style: Option<String>,
+    pub color: Option<String>,
+    pub note: String,
+    pub context: Option<serde_json::Value>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistCoReadingFocusData {
+    pub book_id: String,
+    pub block_keys: Vec<String>,
+    pub notes: Vec<CoReadingNoteCreateData>,
+    pub rolling_summary: Option<String>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistCoReadingFocusResult {
+    pub notes: Vec<crate::core::books::models::BookNote>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseCoReadingFocusData {
+    pub book_id: String,
+    pub block_keys: Vec<String>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseCoReadingFocusResult {
+    pub released: bool,
+    pub committed: bool,
 }
 
 #[derive(Deserialize, Debug)]
@@ -194,6 +241,7 @@ pub struct UpdateCoReadingRangeTaskData {
     pub task_id: String,
     pub status: String,
     pub error: Option<String>,
+    pub expected_updated_at: i64,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -220,9 +268,50 @@ pub struct CoReadingFootprintUpsert {
 #[serde(rename_all = "camelCase")]
 pub struct AdvanceCoReadingRangeTaskData {
     pub task_id: String,
+    pub expected_updated_at: i64,
     pub cursor_index: i64,
     pub scanned_delta: i64,
     pub selected_delta: i64,
     pub processed_delta: i64,
     pub request_delta: i64,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistCoReadingRangeSectionData {
+    pub task_id: String,
+    pub expected_updated_at: i64,
+    pub cursor_index: i64,
+    pub scanned_delta: i64,
+    pub selected_delta: i64,
+    pub processed_delta: i64,
+    pub request_delta: i64,
+    pub notes: Vec<CoReadingNoteCreateData>,
+    pub footprints: Vec<CoReadingFootprintUpsert>,
+    pub rolling_summary: String,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistCoReadingRangeSectionResult {
+    pub task: CoReadingRangeTask,
+    pub notes: Vec<crate::core::books::models::BookNote>,
+    pub footprints: Vec<CoReadingFootprint>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct FailCoReadingRangeSectionData {
+    pub task_id: String,
+    pub expected_updated_at: i64,
+    pub request_delta: i64,
+    pub error: String,
+    pub footprints: Vec<CoReadingFootprintUpsert>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct FailCoReadingRangeSectionResult {
+    pub task: CoReadingRangeTask,
+    pub footprints: Vec<CoReadingFootprint>,
 }

@@ -2,7 +2,9 @@ import { Button } from "@/components/ui/button";
 import {
   getCoReadingCodePointOffset,
   getDocumentCoReadingTextLength,
+  resolveVisibleCoReadingRange,
 } from "@/lib/co-reading-dom";
+import { getCoReadingErrorInfo } from "@/lib/co-reading-core";
 import {
   CO_READING_PERCENTAGE_PRESETS,
   type CoReadingCurrentPosition,
@@ -188,6 +190,9 @@ export function CoReadingRangeMap({
   const activeTask = snapshot.tasks.find(
     (task) => task.status === "running" || task.status === "paused"
   );
+  const latestFailedTask = snapshot.tasks.find(
+    (task) => task.status === "failed"
+  );
   const visibleFootprints = useMemo(
     () =>
       snapshot.footprints.filter(
@@ -231,15 +236,18 @@ export function CoReadingRangeMap({
       toast.error("当前阅读位置精确起点暂仅支持 EPUB");
       return;
     }
-    const range = progress?.range;
-    const contents = view?.renderer.getContents() ?? [];
+    if (!view || !progress) {
+      toast.error("阅读视图尚未就绪");
+      return;
+    }
+    const range = resolveVisibleCoReadingRange(view, progress);
     const rangeDoc = range?.startContainer.ownerDocument;
     const content = rangeDoc
-      ? contents.find((item) => item.doc === rangeDoc)
+      ? view.renderer.getContents().find((item) => item.doc === rangeDoc)
       : undefined;
-    const sectionIndex = content?.index;
+    const sectionIndex = content?.index ?? progress.sectionIndex;
     if (sectionIndex == null || !rangeDoc || !range) {
-      toast.error("无法取得当前 EPUB 可见正文位置，请翻页后重试");
+      toast.error("无法取得当前 EPUB 可见正文位置，请等待页面稳定后重试");
       return;
     }
 
@@ -340,17 +348,57 @@ export function CoReadingRangeMap({
     }
   };
 
+  const notifyTaskChanged = () =>
+    window.dispatchEvent(
+      new CustomEvent("deepreader:range-task-changed", {
+        detail: { bookId },
+      })
+    );
+
   const changeTask = async (status: "running" | "paused" | "stopped") => {
     if (!activeTask) return;
     setBusy(true);
     try {
-      await updateCoReadingRangeTask(activeTask.id, status);
-      await refresh();
-      window.dispatchEvent(
-        new CustomEvent("deepreader:range-task-changed", {
-          detail: { bookId },
-        })
+      await updateCoReadingRangeTask(
+        activeTask.id,
+        status,
+        undefined,
+        activeTask.updatedAt
       );
+      await refresh();
+      notifyTaskChanged();
+    } catch (error) {
+      toast.error(getCoReadingErrorInfo(error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const changeFailedTask = async (status: "running" | "stopped") => {
+    if (!latestFailedTask) return;
+    setBusy(true);
+    try {
+      await updateCoReadingRangeTask(
+        latestFailedTask.id,
+        status,
+        undefined,
+        latestFailedTask.updatedAt
+      );
+      await refresh();
+      notifyTaskChanged();
+      if (status === "running") {
+        toast.success(
+          `已从${
+            latestFailedTask.startIndex === latestFailedTask.endIndex
+              ? "失败位置"
+              : "失败章节"
+          }继续范围阅读`
+        );
+      } else {
+        toast.success("已停止失败的范围阅读任务");
+      }
+    } catch (error) {
+      toast.error(getCoReadingErrorInfo(error).message);
     } finally {
       setBusy(false);
     }
@@ -433,6 +481,47 @@ export function CoReadingRangeMap({
                   className="h-7 flex-1"
                   disabled={busy}
                   onClick={() => changeTask("stopped")}
+                >
+                  <Square className="mr-1 size-3" />
+                  停止
+                </Button>
+              </div>
+            </div>
+          ) : latestFailedTask ? (
+            <div className="space-y-2 text-xs">
+              <div className="rounded border border-red-300 bg-red-50 p-2 text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200">
+                <p className="font-medium">
+                  上次范围阅读停在 {latestFailedTask.cursorIndex + 1}
+                </p>
+                <p className="mt-1">
+                  {
+                    getCoReadingErrorInfo(
+                      latestFailedTask.error ?? "范围阅读失败"
+                    ).message
+                  }
+                </p>
+                <p className="mt-1 opacity-80">
+                  已完成 {latestFailedTask.processedCount} 项 · 已发出{" "}
+                  {latestFailedTask.requestCount}{" "}
+                  次请求；继续时保留进度并从该位置重试。
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  className="h-8 flex-1"
+                  disabled={busy}
+                  onClick={() => void changeFailedTask("running")}
+                >
+                  <Play className="mr-1 size-3" />
+                  从失败位置继续
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 flex-1"
+                  disabled={busy}
+                  onClick={() => void changeFailedTask("stopped")}
                 >
                   <Square className="mr-1 size-3" />
                   停止
@@ -569,10 +658,12 @@ export function CoReadingRangeMap({
             </select>
           </div>
           <div className="flex flex-wrap gap-x-2 gap-y-1 text-[10px] text-muted-foreground">
+            {/* candidate/selected are shown only for historical ledger compatibility;
+                active range workers persist filtered or final decision states directly. */}
             {Object.entries({
               filtered: "过滤",
-              candidate: "候选",
-              selected: "选读",
+              candidate: "候选（历史）",
+              selected: "选读（历史）",
               silent: "静默",
               annotated: "边注",
               failed: "失败",

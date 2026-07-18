@@ -86,8 +86,14 @@ export const createReaderStore = (bookId: string) => {
     pendingCoReadingSource: null,
     coReadingRuntime: {
       visibleBlockCount: 0,
+      visibleQueuedBlockCount: 0,
+      visibleFailedBlockCount: 0,
       leadingBlockKey: null,
       leadingBlockDwellMs: 0,
+      focusKey: null,
+      processingBlockCount: 0,
+      processingStartedAt: null,
+      runBlocked: false,
       isProcessing: false,
       error: null,
     },
@@ -107,7 +113,9 @@ export const createReaderStore = (bookId: string) => {
 
         const response = await fetch(fileUrl);
         if (!response.ok) {
-          throw new Error(`Failed to fetch book file: ${response.status} ${response.statusText}`);
+          throw new Error(
+            `Failed to fetch book file: ${response.status} ${response.statusText}`
+          );
         }
 
         const arrayBuffer = await response.arrayBuffer();
@@ -190,7 +198,8 @@ export const createReaderStore = (bookId: string) => {
     setLocation: (location) => set({ location }),
     setProgress: (progress) => set({ progress }),
     setSessionStats: (stats) => set({ sessionStats: stats }),
-    setSessionInitialized: (initialized) => set({ isSessionInitialized: initialized }),
+    setSessionInitialized: (initialized) =>
+      set({ isSessionInitialized: initialized }),
     setLoading: (loading) => set({ isLoading: loading }),
     setError: (error) => set({ error }),
     setActiveContext: (context) => set({ activeContext: context }),
@@ -201,8 +210,10 @@ export const createReaderStore = (bookId: string) => {
       set((state) => ({
         coReadingRuntime: { ...state.coReadingRuntime, ...runtime },
       })),
-    setPendingReadingFootprint: (pendingReadingFootprint) => set({ pendingReadingFootprint }),
-    setPendingCoReadingSource: (pendingCoReadingSource) => set({ pendingCoReadingSource }),
+    setPendingReadingFootprint: (pendingReadingFootprint) =>
+      set({ pendingReadingFootprint }),
+    setPendingCoReadingSource: (pendingCoReadingSource) =>
+      set({ pendingCoReadingSource }),
   }));
 };
 

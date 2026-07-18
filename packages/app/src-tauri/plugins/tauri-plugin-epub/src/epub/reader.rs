@@ -13,9 +13,7 @@ impl EpubReader {
     pub fn new() -> Result<Self> {
         let chunker = TextChunker::new().context("Failed to initialize text chunker")?;
 
-        Ok(Self {
-            chunker,
-        })
+        Ok(Self { chunker })
     }
 
     /// 读取 EPUB 文件并提取所有文本内容
@@ -160,7 +158,13 @@ impl EpubReader {
 
     /// 专门用于 Markdown 文件的智能分块方法
     /// 考虑 Markdown 格式特性：标题层级、段落边界、代码块等
-    pub fn chunk_md_file(&self, md_content: &str, min_tokens: usize, max_tokens: usize) -> Vec<String> {
-        self.chunker.chunk_md_file(md_content, min_tokens, max_tokens)
+    pub fn chunk_md_file(
+        &self,
+        md_content: &str,
+        min_tokens: usize,
+        max_tokens: usize,
+    ) -> Vec<String> {
+        self.chunker
+            .chunk_md_file(md_content, min_tokens, max_tokens)
     }
 }

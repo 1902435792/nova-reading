@@ -111,6 +111,7 @@ CREATE TABLE IF NOT EXISTS book_notes (
     style TEXT,                            -- 高亮样式: highlight|underline|squiggly
     color TEXT,                            -- 颜色: red|yellow|green|blue|violet
     author TEXT NOT NULL DEFAULT 'human',  -- 标注作者: human|ai
+    source_note_id TEXT,                   -- 手动 AI 书评关联的人类下划线
     note TEXT NOT NULL,                    -- 用户笔记内容
     context_before TEXT,                   -- 前文上下文
     context_after TEXT,                    -- 后文上下文
@@ -126,6 +127,8 @@ CREATE INDEX IF NOT EXISTS idx_book_notes_book_id ON book_notes(book_id);
 CREATE INDEX IF NOT EXISTS idx_book_notes_type ON book_notes(type);
 CREATE INDEX IF NOT EXISTS idx_book_notes_created_at ON book_notes(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_book_notes_cfi ON book_notes(cfi);
+-- source_note_id is added to existing databases by run_migrations();
+-- its partial unique index is created there after the column exists.
 
 -- AI 共读设置 - 每本书独立控制
 CREATE TABLE IF NOT EXISTS co_reading_settings (
@@ -145,6 +148,7 @@ CREATE TABLE IF NOT EXISTS co_reading_blocks (
     id TEXT PRIMARY KEY NOT NULL,
     book_id TEXT NOT NULL,
     block_key TEXT NOT NULL,
+    focus_key TEXT NOT NULL DEFAULT '',
     section_index INTEGER NOT NULL,
     section_label TEXT NOT NULL DEFAULT '',
     cfi TEXT NOT NULL,

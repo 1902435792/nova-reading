@@ -1,7 +1,13 @@
 import type { BookNote } from "./book";
 
 export type CoReadingStatus = "off" | "active" | "paused";
-export type CoReadingBlockStatus = "tracking" | "queued" | "processing" | "silent" | "annotated" | "failed";
+export type CoReadingBlockStatus =
+  | "tracking"
+  | "queued"
+  | "processing"
+  | "silent"
+  | "annotated"
+  | "failed";
 
 export interface CoReadingSettings {
   bookId: string;
@@ -20,6 +26,8 @@ export interface CoReadingBlock {
   id: string;
   bookId: string;
   blockKey: string;
+  /** Stable visible page/spread focus identifier shared by all blocks read together. */
+  focusKey?: string;
   sectionIndex: number;
   sectionLabel: string;
   cfi: string;
@@ -55,6 +63,8 @@ export interface CoReadingBlockUpsert {
   id: string;
   bookId: string;
   blockKey: string;
+  /** Stable visible page/spread focus identifier shared by all blocks read together. */
+  focusKey: string;
   sectionIndex: number;
   sectionLabel: string;
   cfi: string;
@@ -95,6 +105,68 @@ export interface CoReadingBatchDecision {
   summary: string;
 }
 
+/** Final result for one complete visible page/spread focus. */
+export interface CoReadingItemResult {
+  summary: string;
+  annotations: Array<{
+    blockKey: string;
+    quote: string;
+    comment: string;
+  }>;
+}
+
+/** Final result for a user-triggered review of one human underline. */
+export interface CoReadingReviewResult {
+  review: string;
+}
+
+export interface CoReadingReviewInput {
+  text: string;
+  contextBefore: string;
+  contextAfter: string;
+  humanNote: string;
+  rollingSummary: string;
+  recentAiAnnotations: string[];
+}
+
+export interface CoReadingNoteCreateData {
+  id: string;
+  blockKey: string;
+  type: "annotation";
+  cfi: string;
+  text: string;
+  style: "underline";
+  color: "blue";
+  note: string;
+  context: {
+    before: string;
+    after: string;
+  };
+}
+
+export interface PersistCoReadingFocusData {
+  bookId: string;
+  blockKeys: string[];
+  notes: CoReadingNoteCreateData[];
+  rollingSummary?: string;
+}
+
+export interface PersistCoReadingFocusResult {
+  notes: BookNote[];
+}
+
+export interface ReleaseCoReadingFocusData {
+  bookId: string;
+  blockKeys: string[];
+}
+
+export interface ReleaseCoReadingFocusResult {
+  /** True only when this call changed the complete focus from processing back to queued. */
+  released: boolean;
+  /** True when the focus had already committed atomically before cancellation reached Rust. */
+  committed: boolean;
+}
+
 export interface CoReadingBatch {
   newBlocks: CoReadingBlock[];
   recentBlocks: CoReadingBlock[];
@@ -105,8 +177,15 @@ export interface CoReadingBatch {
 
 export interface CoReadingRuntimeState {
   visibleBlockCount: number;
+  visibleQueuedBlockCount: number;
+  visibleFailedBlockCount: number;
   leadingBlockKey: string | null;
   leadingBlockDwellMs: number;
+  /** Current visible page/spread focus or the focus being processed. */
+  focusKey: string | null;
+  processingBlockCount: number;
+  processingStartedAt: number | null;
+  runBlocked: boolean;
   isProcessing: boolean;
   error: string | null;
 }
@@ -123,8 +202,29 @@ export type ValidatedCoReadingDecision =
     }
   | { ok: false; error: string };
 
-export type CoReadingRangeTaskStatus = "running" | "paused" | "completed" | "stopped" | "failed";
-export type CoReadingFootprintStatus = "filtered" | "candidate" | "selected" | "silent" | "annotated" | "failed";
+export interface ValidatedCoReadingItemResult {
+  annotations: Array<{
+    block: CoReadingBlock;
+    quote: string;
+    comment: string;
+  }>;
+  summary: string;
+}
+
+export type CoReadingRangeTaskStatus =
+  | "running"
+  | "paused"
+  | "completed"
+  | "stopped"
+  | "failed";
+export type CoReadingFootprintStatus =
+  | "filtered"
+  // Historical compatibility only: active range workers persist final states directly.
+  | "candidate"
+  | "selected"
+  | "silent"
+  | "annotated"
+  | "failed";
 
 export interface CoReadingRangeTask {
   id: string;
@@ -210,4 +310,49 @@ export interface CreateCoReadingRangeTaskData {
   endPercent?: number;
 }
 
-export type CoReadingFootprintUpsert = Omit<CoReadingFootprint, "createdAt" | "updatedAt">;
+export interface UpdateCoReadingRangeTaskData {
+  taskId: string;
+  status: CoReadingRangeTaskStatus;
+  error?: string;
+  expectedUpdatedAt: number;
+}
+export type CoReadingFootprintUpsert = Omit<
+  CoReadingFootprint,
+  "createdAt" | "updatedAt"
+>;
+
+export interface AdvanceCoReadingRangeTaskData {
+  taskId: string;
+  expectedUpdatedAt: number;
+  cursorIndex: number;
+  scannedDelta: number;
+  selectedDelta: number;
+  processedDelta: number;
+  requestDelta: number;
+}
+
+export interface PersistCoReadingRangeSectionData
+  extends AdvanceCoReadingRangeTaskData {
+  notes: CoReadingNoteCreateData[];
+  footprints: CoReadingFootprintUpsert[];
+  rollingSummary: string;
+}
+
+export interface PersistCoReadingRangeSectionResult {
+  task: CoReadingRangeTask;
+  notes: BookNote[];
+  footprints: CoReadingFootprint[];
+}
+
+export interface FailCoReadingRangeSectionData {
+  taskId: string;
+  expectedUpdatedAt: number;
+  requestDelta: number;
+  error: string;
+  footprints: CoReadingFootprintUpsert[];
+}
+
+export interface FailCoReadingRangeSectionResult {
+  task: CoReadingRangeTask;
+  footprints: CoReadingFootprint[];
+}

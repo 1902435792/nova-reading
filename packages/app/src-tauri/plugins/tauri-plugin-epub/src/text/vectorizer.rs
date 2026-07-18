@@ -45,12 +45,14 @@ pub struct TextVectorizer {
     embedding_dimension: Option<usize>, // 缓存检测到的维度
 }
 
-
-
 impl TextVectorizer {
     /// 创建新的文本向量化器
     pub async fn new(config: VectorizerConfig) -> Result<Self> {
-        log::info!("初始化嵌入 API 向量化器: embeddings_url={}, model={}", config.embeddings_url, config.model_name);
+        log::info!(
+            "初始化嵌入 API 向量化器: embeddings_url={}, model={}",
+            config.embeddings_url,
+            config.model_name
+        );
 
         let client = Client::new();
         let tokenizer = o200k_base().context("Failed to initialize tiktoken tokenizer")?;
@@ -79,7 +81,8 @@ impl TextVectorizer {
             log::debug!("原文本预览(120)：{}", preview);
             let clipped = &tokens[..MAX_CHUNK_TOKENS];
             // 将截断后的 token 反解码为字符串
-            self.tokenizer.decode(clipped.to_vec())
+            self.tokenizer
+                .decode(clipped.to_vec())
                 .unwrap_or_else(|_| text.chars().take(1000).collect::<String>())
         } else {
             text.to_string()
@@ -88,7 +91,8 @@ impl TextVectorizer {
         // 判断是否为 Ollama API（根据 URL 结尾）
         let is_ollama = self.embeddings_url.ends_with("/api/embed");
 
-        let mut req = self.client
+        let mut req = self
+            .client
             .post(&self.embeddings_url)
             .header("Content-Type", "application/json");
 
@@ -158,8 +162,6 @@ impl TextVectorizer {
 
         Ok(embedding)
     }
-
-
 
     /// 检测向量维度（通过发送测试文本）
     pub async fn detect_embedding_dimension(&mut self) -> Result<usize> {

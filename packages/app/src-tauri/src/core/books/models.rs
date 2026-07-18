@@ -273,6 +273,8 @@ pub struct BookNote {
     pub style: Option<String>,
     pub color: Option<String>,
     pub author: String,
+    #[serde(rename = "sourceNoteId", skip_serializing_if = "Option::is_none")]
+    pub source_note_id: Option<String>,
     pub note: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<serde_json::Value>,
@@ -293,6 +295,8 @@ pub struct BookNoteCreateData {
     pub style: Option<String>,
     pub color: Option<String>,
     pub author: Option<String>,
+    #[serde(rename = "sourceNoteId")]
+    pub source_note_id: Option<String>,
     pub note: String,
     pub context: Option<serde_json::Value>,
 }
@@ -305,6 +309,8 @@ pub struct BookNoteUpdateData {
     pub text: Option<String>,
     pub style: Option<String>,
     pub color: Option<String>,
+    #[serde(rename = "sourceNoteId")]
+    pub source_note_id: Option<Option<String>>,
     pub note: Option<String>,
     pub context: Option<serde_json::Value>,
 }
@@ -319,6 +325,7 @@ impl BookNote {
         style: Option<String>,
         color: Option<String>,
         author: String,
+        source_note_id: Option<String>,
         note: String,
         context: Option<serde_json::Value>,
     ) -> Self {
@@ -332,6 +339,7 @@ impl BookNote {
             style,
             color,
             author,
+            source_note_id,
             note,
             context,
             created_at: now,
@@ -363,6 +371,7 @@ impl BookNote {
             style: row.try_get("style")?,
             color: row.try_get("color")?,
             author: row.try_get("author")?,
+            source_note_id: row.try_get("source_note_id")?,
             note: row.try_get("note")?,
             context,
             created_at: row.try_get("created_at")?,

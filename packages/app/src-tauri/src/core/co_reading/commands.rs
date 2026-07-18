@@ -6,6 +6,7 @@ use tokio::time::{sleep, Duration};
 
 const PROCESSING_STALE_MS: i64 = 5 * 60 * 1_000;
 const SNAPSHOT_BLOCK_LIMIT: i64 = 100;
+const RANGE_TAKEOVER_ERROR: &str = "范围阅读已接管，当前普通共读焦点已重新排队";
 
 fn validate_settings(status: &str, dwell_seconds: i64) -> Result<(), String> {
     if !matches!(status, "off" | "active" | "paused") {
@@ -21,11 +22,15 @@ fn validate_upsert(block: &CoReadingBlockUpsert) -> Result<(), String> {
     if !matches!(block.status.as_str(), "tracking" | "queued") {
         return Err("文本块只能写入 tracking 或 queued 状态".to_string());
     }
-    if block.block_key.trim().is_empty()
+    if block.id.trim().is_empty()
+        || block.book_id.trim().is_empty()
+        || block.block_key.trim().is_empty()
+        || block.focus_key.trim().is_empty()
         || block.text.trim().is_empty()
+        || block.text_hash.trim().is_empty()
         || block.cfi.trim().is_empty()
     {
-        return Err("文本块标识、正文和 CFI 不能为空".to_string());
+        return Err("文本块 ID、书籍、焦点、正文、正文哈希和 CFI 不能为空".to_string());
     }
     if block.dwell_ms < 0 {
         return Err("停留时间不能为负数".to_string());
@@ -38,6 +43,7 @@ fn block_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<CoReadingBlock, sqlx:
         id: row.try_get("id")?,
         book_id: row.try_get("book_id")?,
         block_key: row.try_get("block_key")?,
+        focus_key: row.try_get("focus_key")?,
         section_index: row.try_get("section_index")?,
         section_label: row.try_get("section_label")?,
         cfi: row.try_get("cfi")?,
@@ -66,6 +72,19 @@ async fn app_pool(app_handle: &AppHandle) -> Result<SqlitePool, String> {
     Err("数据库初始化超时".to_string())
 }
 
+fn settings_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<CoReadingSettings, sqlx::Error> {
+    Ok(CoReadingSettings {
+        book_id: row.try_get("book_id")?,
+        status: row.try_get("status")?,
+        dwell_seconds: row.try_get("dwell_seconds")?,
+        rolling_summary: row.try_get("rolling_summary")?,
+        model_provider_id: row.try_get("model_provider_id")?,
+        model_id: row.try_get("model_id")?,
+        created_at: row.try_get("created_at")?,
+        updated_at: row.try_get("updated_at")?,
+    })
+}
+
 async fn ensure_settings(pool: &SqlitePool, book_id: &str) -> Result<CoReadingSettings, String> {
     let now = chrono::Utc::now().timestamp_millis();
     sqlx::query(
@@ -91,18 +110,7 @@ async fn ensure_settings(pool: &SqlitePool, book_id: &str) -> Result<CoReadingSe
     .await
     .map_err(|e| format!("读取共读设置失败: {e}"))?;
 
-    Ok(CoReadingSettings {
-        book_id: row.try_get("book_id").map_err(|e| e.to_string())?,
-        status: row.try_get("status").map_err(|e| e.to_string())?,
-        dwell_seconds: row.try_get("dwell_seconds").map_err(|e| e.to_string())?,
-        rolling_summary: row.try_get("rolling_summary").map_err(|e| e.to_string())?,
-        model_provider_id: row
-            .try_get("model_provider_id")
-            .map_err(|e| e.to_string())?,
-        model_id: row.try_get("model_id").map_err(|e| e.to_string())?,
-        created_at: row.try_get("created_at").map_err(|e| e.to_string())?,
-        updated_at: row.try_get("updated_at").map_err(|e| e.to_string())?,
-    })
+    settings_from_row(&row).map_err(|e| e.to_string())
 }
 
 pub async fn update_settings(
@@ -110,27 +118,50 @@ pub async fn update_settings(
     data: UpdateCoReadingSettingsData,
 ) -> Result<CoReadingSettings, String> {
     validate_settings(&data.status, data.dwell_seconds)?;
-    let current = ensure_settings(pool, &data.book_id).await?;
+    ensure_settings(pool, &data.book_id).await?;
     let now = chrono::Utc::now().timestamp_millis();
-    let rolling_summary = data.rolling_summary.unwrap_or(current.rolling_summary);
-    let model_provider_id = data.model_provider_id.unwrap_or(current.model_provider_id);
-    let model_id = data.model_id.unwrap_or(current.model_id);
 
-    sqlx::query(
-        "UPDATE co_reading_settings SET status = ?, dwell_seconds = ?, rolling_summary = ?, model_provider_id = ?, model_id = ?, updated_at = ? WHERE book_id = ?",
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+    if data.status != "paused" {
+        let unresolved: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM co_reading_range_tasks WHERE book_id=? AND status IN ('running','paused','failed')",
+        )
+        .bind(&data.book_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+        if unresolved > 0 {
+            return Err("范围阅读进行、暂停或等待续跑期间，普通跟读必须保持暂停".to_string());
+        }
+    }
+
+    let updated = sqlx::query(
+        "UPDATE co_reading_settings SET status = ?, dwell_seconds = ?, rolling_summary = COALESCE(?, rolling_summary), model_provider_id = COALESCE(?, model_provider_id), model_id = COALESCE(?, model_id), updated_at = MAX(updated_at + 1, ?) WHERE book_id = ?",
     )
     .bind(&data.status)
     .bind(data.dwell_seconds)
-    .bind(&rolling_summary)
-    .bind(&model_provider_id)
-    .bind(&model_id)
+    .bind(&data.rolling_summary)
+    .bind(&data.model_provider_id)
+    .bind(&data.model_id)
     .bind(now)
     .bind(&data.book_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .map_err(|e| format!("更新共读设置失败: {e}"))?;
+    if updated.rows_affected() != 1 {
+        return Err("更新共读设置失败：设置记录已被删除".to_string());
+    }
 
-    ensure_settings(pool, &data.book_id).await
+    let row = sqlx::query(
+        "SELECT book_id, status, dwell_seconds, rolling_summary, model_provider_id, model_id, created_at, updated_at FROM co_reading_settings WHERE book_id = ?",
+    )
+    .bind(&data.book_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| format!("读取更新后的共读设置失败: {e}"))?;
+    let settings = settings_from_row(&row).map_err(|e| e.to_string())?;
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(settings)
 }
 
 pub async fn upsert_blocks(
@@ -153,10 +184,16 @@ pub async fn upsert_blocks(
         sqlx::query(
             r#"
             INSERT INTO co_reading_blocks (
-                id, book_id, block_key, section_index, section_label, cfi, text, text_hash,
+                id, book_id, block_key, focus_key, section_index, section_label, cfi, text, text_hash,
                 dwell_ms, status, unlocked_at, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(book_id, block_key) DO UPDATE SET
+                focus_key = CASE
+                    WHEN co_reading_blocks.status IN ('tracking', 'queued')
+                         AND excluded.status IN ('tracking', 'queued')
+                        THEN excluded.focus_key
+                    ELSE co_reading_blocks.focus_key
+                END,
                 dwell_ms = MAX(co_reading_blocks.dwell_ms, excluded.dwell_ms),
                 status = CASE
                     WHEN co_reading_blocks.status IN ('processing', 'silent', 'annotated', 'failed')
@@ -172,6 +209,7 @@ pub async fn upsert_blocks(
         .bind(&block.id)
         .bind(&block.book_id)
         .bind(&block.block_key)
+        .bind(&block.focus_key)
         .bind(block.section_index)
         .bind(&block.section_label)
         .bind(&block.cfi)
@@ -207,14 +245,23 @@ pub async fn upsert_blocks(
 pub async fn queued_blocks(
     pool: &SqlitePool,
     book_id: &str,
-    limit: i64,
+    _limit: i64,
 ) -> Result<Vec<CoReadingBlock>, String> {
-    let limit = limit.clamp(1, 100);
-    let rows = sqlx::query(
-        "SELECT * FROM co_reading_blocks WHERE book_id = ? AND status = 'queued' ORDER BY unlocked_at ASC, created_at ASC LIMIT ?",
+    let focus_key: Option<String> = sqlx::query_scalar(
+        "SELECT focus_key FROM co_reading_blocks WHERE book_id=? AND status='queued' ORDER BY unlocked_at ASC, created_at ASC LIMIT 1",
     )
     .bind(book_id)
-    .bind(limit)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("读取共读焦点失败: {e}"))?;
+    let Some(focus_key) = focus_key else {
+        return Ok(Vec::new());
+    };
+    let rows = sqlx::query(
+        "SELECT * FROM co_reading_blocks WHERE book_id = ? AND status = 'queued' AND focus_key = ? ORDER BY unlocked_at ASC, created_at ASC",
+    )
+    .bind(book_id)
+    .bind(focus_key)
     .fetch_all(pool)
     .await
     .map_err(|e| format!("读取共读队列失败: {e}"))?;
@@ -233,12 +280,39 @@ pub async fn claim_blocks(
         return Ok(Vec::new());
     }
     let now = chrono::Utc::now().timestamp_millis();
+    let expected = data.block_keys.len();
     let mut tx = pool
         .begin()
         .await
         .map_err(|e| format!("开启事务失败: {e}"))?;
-    let mut claimed = Vec::new();
 
+    let ordinary_can_claim: i64 = sqlx::query_scalar(
+        r#"
+        SELECT CASE WHEN
+            EXISTS (
+                SELECT 1 FROM co_reading_settings
+                WHERE book_id=? AND status='active'
+            )
+            AND NOT EXISTS (
+                SELECT 1 FROM co_reading_range_tasks
+                WHERE book_id=? AND status IN ('running','paused','failed')
+            )
+        THEN 1 ELSE 0 END
+        "#,
+    )
+    .bind(&data.book_id)
+    .bind(&data.book_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| format!("校验普通共读认领状态失败: {e}"))?;
+    if ordinary_can_claim != 1 {
+        tx.commit()
+            .await
+            .map_err(|e| format!("提交事务失败: {e}"))?;
+        return Ok(Vec::new());
+    }
+
+    let mut claimed = Vec::new();
     for block_key in data.block_keys {
         let result = sqlx::query(
             "UPDATE co_reading_blocks SET status = 'processing', error = NULL, updated_at = ? WHERE book_id = ? AND block_key = ? AND status = 'queued'",
@@ -261,6 +335,9 @@ pub async fn claim_blocks(
             claimed.push(block_from_row(&row).map_err(|e| e.to_string())?);
         }
     }
+    if claimed.len() != expected {
+        return Err("当前页面包含已被处理或不再排队的正文块，未进行部分认领".to_string());
+    }
     tx.commit()
         .await
         .map_err(|e| format!("提交事务失败: {e}"))?;
@@ -274,16 +351,20 @@ pub async fn complete_batch(
     if !matches!(data.status.as_str(), "silent" | "annotated" | "failed") {
         return Err("完成状态必须是 silent、annotated 或 failed".to_string());
     }
-    if data.status == "annotated" && data.annotation_id.as_deref().unwrap_or("").is_empty() {
-        return Err("批注完成状态必须提供 annotationId".to_string());
-    }
-    if data.status == "annotated"
-        && !data
+    let annotation_map = data.annotations.as_ref();
+    let has_legacy_annotation = !data.annotation_id.as_deref().unwrap_or("").is_empty()
+        && data
             .annotated_block_key
             .as_ref()
-            .is_some_and(|key| data.block_keys.contains(key))
-    {
-        return Err("批注完成状态必须指定本批中的 annotatedBlockKey".to_string());
+            .is_some_and(|key| data.block_keys.contains(key));
+    let has_annotation_map = annotation_map.is_some_and(|items| {
+        !items.is_empty()
+            && items
+                .iter()
+                .all(|(key, value)| data.block_keys.contains(key) && !value.trim().is_empty())
+    });
+    if data.status == "annotated" && !has_legacy_annotation && !has_annotation_map {
+        return Err("批注完成状态必须提供本页有效的批注映射".to_string());
     }
     if data.status == "failed" && data.error.as_deref().unwrap_or("").trim().is_empty() {
         return Err("失败状态必须提供错误信息".to_string());
@@ -300,8 +381,10 @@ pub async fn complete_batch(
         .map_err(|e| format!("开启事务失败: {e}"))?;
     let mut affected = 0;
     for block_key in &data.block_keys {
+        let mapped_annotation_id = annotation_map.and_then(|items| items.get(block_key));
         let is_annotated_block = data.status == "annotated"
-            && data.annotated_block_key.as_deref() == Some(block_key.as_str());
+            && (mapped_annotation_id.is_some()
+                || data.annotated_block_key.as_deref() == Some(block_key.as_str()));
         let block_status = if is_annotated_block {
             "annotated"
         } else if data.status == "annotated" {
@@ -309,9 +392,11 @@ pub async fn complete_batch(
         } else {
             data.status.as_str()
         };
-        let annotation_id = is_annotated_block
-            .then_some(data.annotation_id.as_deref())
-            .flatten();
+        let annotation_id = mapped_annotation_id.map(String::as_str).or_else(|| {
+            is_annotated_block
+                .then_some(data.annotation_id.as_deref())
+                .flatten()
+        });
         let block_decision = if data.status == "annotated" && !is_annotated_block {
             Some("silent")
         } else {
@@ -342,8 +427,8 @@ pub async fn complete_batch(
     }
 
     if let Some(summary) = data.rolling_summary {
-        sqlx::query(
-            "UPDATE co_reading_settings SET rolling_summary = ?, updated_at = ? WHERE book_id = ?",
+        let updated = sqlx::query(
+            "UPDATE co_reading_settings SET rolling_summary = ?, updated_at = MAX(updated_at + 1, ?) WHERE book_id = ?",
         )
         .bind(summary)
         .bind(now)
@@ -351,12 +436,420 @@ pub async fn complete_batch(
         .execute(&mut *tx)
         .await
         .map_err(|e| format!("更新共读摘要失败: {e}"))?;
+        if updated.rows_affected() != 1 {
+            return Err("更新共读摘要失败：设置记录已被删除".to_string());
+        }
     }
 
     tx.commit()
         .await
         .map_err(|e| format!("提交事务失败: {e}"))?;
     Ok(())
+}
+
+fn context_parts(context: &Option<serde_json::Value>) -> (Option<String>, Option<String>) {
+    if let Some(context) = context {
+        (
+            context
+                .get("before")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+            context
+                .get("after")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+        )
+    } else {
+        (None, None)
+    }
+}
+
+pub async fn persist_focus(
+    pool: &SqlitePool,
+    data: PersistCoReadingFocusData,
+) -> Result<PersistCoReadingFocusResult, String> {
+    if data.book_id.trim().is_empty() || data.block_keys.is_empty() {
+        return Err("持久化共读焦点必须包含书籍和正文块".to_string());
+    }
+    if data.notes.len() > 3 {
+        return Err("单个页面最多持久化 3 条共读书评".to_string());
+    }
+
+    let mut unique_block_keys = std::collections::HashSet::new();
+    for block_key in &data.block_keys {
+        if block_key.trim().is_empty() || !unique_block_keys.insert(block_key.as_str()) {
+            return Err("共读焦点正文块标识必须非空且唯一".to_string());
+        }
+    }
+    let mut note_ids = std::collections::HashSet::new();
+    let mut representative_annotations = std::collections::HashMap::new();
+    for note in &data.notes {
+        let text_is_valid = note
+            .text
+            .as_deref()
+            .is_some_and(|text| !text.trim().is_empty());
+        if note.id.trim().is_empty()
+            || note.block_key.trim().is_empty()
+            || note.cfi.trim().is_empty()
+            || note.note.trim().is_empty()
+            || !unique_block_keys.contains(note.block_key.as_str())
+            || note.r#type != "annotation"
+            || !text_is_valid
+            || note.style.as_deref() != Some("underline")
+            || note.color.as_deref() != Some("blue")
+        {
+            return Err(
+                "共读书评必须是带逐字引文、下划线样式、蓝色和有效 CFI 的 AI 批注".to_string(),
+            );
+        }
+        if !note_ids.insert(note.id.as_str()) {
+            return Err("共读笔记 ID 不能重复".to_string());
+        }
+        representative_annotations
+            .entry(note.block_key.clone())
+            .or_insert_with(|| note.id.clone());
+    }
+
+    ensure_settings(pool, &data.book_id).await?;
+    let now = chrono::Utc::now().timestamp_millis();
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| format!("开启事务失败: {e}"))?;
+
+    let mut blocks = Vec::with_capacity(data.block_keys.len());
+    for block_key in &data.block_keys {
+        let row =
+            sqlx::query("SELECT * FROM co_reading_blocks WHERE book_id = ? AND block_key = ?")
+                .bind(&data.book_id)
+                .bind(block_key)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|e| format!("读取共读焦点正文块失败: {e}"))?
+                .ok_or_else(|| "共读焦点包含不存在的正文块".to_string())?;
+        blocks.push(block_from_row(&row).map_err(|e| e.to_string())?);
+    }
+    let focus_key = blocks
+        .first()
+        .map(|block| block.focus_key.as_str())
+        .unwrap_or_default();
+    if focus_key.trim().is_empty()
+        || blocks
+            .iter()
+            .any(|block| block.focus_key.as_str() != focus_key)
+    {
+        return Err("一次只能持久化同一个非空页面焦点".to_string());
+    }
+
+    let all_processing = blocks.iter().all(|block| block.status == "processing");
+    let all_completed_as_requested = blocks.iter().all(|block| {
+        let annotation_id = representative_annotations.get(&block.block_key);
+        let expected_status = if annotation_id.is_some() {
+            "annotated"
+        } else {
+            "silent"
+        };
+        let expected_decision = if annotation_id.is_some() {
+            "annotate"
+        } else {
+            "silent"
+        };
+        block.status == expected_status
+            && block.decision.as_deref() == Some(expected_decision)
+            && block.annotation_id.as_ref() == annotation_id
+            && block.error.is_none()
+    });
+    if !all_processing && !all_completed_as_requested {
+        return Err("共读焦点状态与本次持久化请求冲突".to_string());
+    }
+
+    // A completed replay is deliberately checked before this gate: callers that lost
+    // an IPC response may still read their already-committed result after range takeover.
+    if all_processing {
+        let ordinary_can_persist: i64 = sqlx::query_scalar(
+            r#"
+            SELECT CASE WHEN
+                EXISTS (
+                    SELECT 1 FROM co_reading_settings
+                    WHERE book_id=? AND status='active'
+                )
+                AND NOT EXISTS (
+                    SELECT 1 FROM co_reading_range_tasks
+                    WHERE book_id=? AND status IN ('running','paused','failed')
+                )
+            THEN 1 ELSE 0 END
+            "#,
+        )
+        .bind(&data.book_id)
+        .bind(&data.book_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| format!("校验普通共读持久化状态失败: {e}"))?;
+        if ordinary_can_persist != 1 {
+            let mut requeued = 0;
+            for block_key in &data.block_keys {
+                requeued += sqlx::query(
+                    r#"
+                    UPDATE co_reading_blocks
+                    SET status='queued', decision=NULL, annotation_id=NULL, error=NULL,
+                        processed_at=NULL, updated_at=MAX(updated_at + 1, ?)
+                    WHERE book_id=? AND block_key=? AND status='processing'
+                    "#,
+                )
+                .bind(now)
+                .bind(&data.book_id)
+                .bind(block_key)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("范围接管时恢复普通共读焦点失败: {e}"))?
+                .rows_affected();
+            }
+            if requeued != data.block_keys.len() as u64 {
+                return Err("范围接管时普通共读焦点状态发生冲突".to_string());
+            }
+            tx.commit()
+                .await
+                .map_err(|e| format!("提交范围接管恢复事务失败: {e}"))?;
+            return Err(RANGE_TAKEOVER_ERROR.to_string());
+        }
+    }
+
+    let mut persisted_notes = Vec::with_capacity(data.notes.len());
+    for note in &data.notes {
+        let (context_before, context_after) = context_parts(&note.context);
+        if all_processing {
+            sqlx::query(
+                r#"
+                INSERT INTO book_notes (
+                    id, book_id, type, cfi, text, style, color, author, source_note_id,
+                    note, context_before, context_after, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ai', NULL, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO NOTHING
+                "#,
+            )
+            .bind(&note.id)
+            .bind(&data.book_id)
+            .bind(&note.r#type)
+            .bind(&note.cfi)
+            .bind(&note.text)
+            .bind(&note.style)
+            .bind(&note.color)
+            .bind(&note.note)
+            .bind(&context_before)
+            .bind(&context_after)
+            .bind(now)
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("创建共读笔记失败: {e}"))?;
+        }
+        let matches_existing: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*) FROM book_notes
+            WHERE id = ? AND book_id = ? AND author = 'ai' AND source_note_id IS NULL
+              AND type = ? AND cfi = ?
+              AND COALESCE(text, '') = COALESCE(?, '')
+              AND COALESCE(style, '') = COALESCE(?, '')
+              AND COALESCE(color, '') = COALESCE(?, '')
+              AND note = ?
+              AND COALESCE(context_before, '') = COALESCE(?, '')
+              AND COALESCE(context_after, '') = COALESCE(?, '')
+            "#,
+        )
+        .bind(&note.id)
+        .bind(&data.book_id)
+        .bind(&note.r#type)
+        .bind(&note.cfi)
+        .bind(&note.text)
+        .bind(&note.style)
+        .bind(&note.color)
+        .bind(&note.note)
+        .bind(&context_before)
+        .bind(&context_after)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| format!("校验已有共读笔记失败: {e}"))?;
+        if matches_existing != 1 {
+            return Err("共读笔记 ID 与其他内容冲突".to_string());
+        }
+        let row = sqlx::query("SELECT * FROM book_notes WHERE id = ?")
+            .bind(&note.id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| format!("读取已持久化共读笔记失败: {e}"))?;
+        persisted_notes.push(
+            crate::core::books::models::BookNote::from_db_row(&row)
+                .map_err(|e| format!("解析已持久化共读笔记失败: {e}"))?,
+        );
+    }
+
+    if all_processing {
+        let mut affected = 0;
+        for block_key in &data.block_keys {
+            let annotation_id = representative_annotations.get(block_key);
+            let block_status = if annotation_id.is_some() {
+                "annotated"
+            } else {
+                "silent"
+            };
+            let decision = if annotation_id.is_some() {
+                "annotate"
+            } else {
+                "silent"
+            };
+            let result = sqlx::query(
+                r#"
+                UPDATE co_reading_blocks
+                SET status = ?, decision = ?, annotation_id = ?, error = NULL,
+                    processed_at = ?, updated_at = ?
+                WHERE book_id = ? AND block_key = ? AND status = 'processing'
+                "#,
+            )
+            .bind(block_status)
+            .bind(decision)
+            .bind(annotation_id)
+            .bind(now)
+            .bind(now)
+            .bind(&data.book_id)
+            .bind(block_key)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("完成共读文本块失败: {e}"))?;
+            affected += result.rows_affected();
+        }
+        if affected != data.block_keys.len() as u64 {
+            return Err("批次中包含未认领或已完成的文本块".to_string());
+        }
+        if let Some(summary) = data.rolling_summary {
+            let updated = sqlx::query(
+                "UPDATE co_reading_settings SET rolling_summary = ?, updated_at = MAX(updated_at + 1, ?) WHERE book_id = ?",
+            )
+            .bind(summary)
+            .bind(now)
+            .bind(&data.book_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("更新共读摘要失败: {e}"))?;
+            if updated.rows_affected() != 1 {
+                return Err("更新共读摘要失败：设置记录已被删除".to_string());
+            }
+        }
+    }
+
+    tx.commit()
+        .await
+        .map_err(|e| format!("提交事务失败: {e}"))?;
+    Ok(PersistCoReadingFocusResult {
+        notes: persisted_notes,
+    })
+}
+
+pub async fn release_focus(
+    pool: &SqlitePool,
+    data: ReleaseCoReadingFocusData,
+) -> Result<ReleaseCoReadingFocusResult, String> {
+    if data.book_id.trim().is_empty() || data.block_keys.is_empty() {
+        return Err("释放共读焦点必须包含书籍和正文块".to_string());
+    }
+    let mut unique_block_keys = std::collections::HashSet::new();
+    if data
+        .block_keys
+        .iter()
+        .any(|key| key.trim().is_empty() || !unique_block_keys.insert(key.as_str()))
+    {
+        return Err("释放共读焦点的正文块标识必须非空且唯一".to_string());
+    }
+
+    let now = chrono::Utc::now().timestamp_millis();
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| format!("开启事务失败: {e}"))?;
+    let mut blocks = Vec::with_capacity(data.block_keys.len());
+    for block_key in &data.block_keys {
+        let row = sqlx::query("SELECT * FROM co_reading_blocks WHERE book_id=? AND block_key=?")
+            .bind(&data.book_id)
+            .bind(block_key)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| format!("读取待释放共读焦点失败: {e}"))?
+            .ok_or_else(|| "释放共读焦点包含不存在的正文块".to_string())?;
+        blocks.push(block_from_row(&row).map_err(|e| e.to_string())?);
+    }
+    let focus_key = blocks
+        .first()
+        .map(|block| block.focus_key.as_str())
+        .unwrap_or_default();
+    if focus_key.trim().is_empty()
+        || blocks
+            .iter()
+            .any(|block| block.focus_key.as_str() != focus_key)
+    {
+        return Err("一次只能释放同一个非空页面焦点".to_string());
+    }
+    let focus_block_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM co_reading_blocks WHERE book_id=? AND focus_key=?",
+    )
+    .bind(&data.book_id)
+    .bind(focus_key)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| format!("校验待释放共读焦点完整性失败: {e}"))?;
+    if focus_block_count != data.block_keys.len() as i64 {
+        return Err("释放请求必须包含完整页面焦点".to_string());
+    }
+
+    let all_processing = blocks.iter().all(|block| block.status == "processing");
+    let all_queued = blocks.iter().all(|block| block.status == "queued");
+    let all_committed = blocks.iter().all(|block| {
+        matches!(block.status.as_str(), "silent" | "annotated") && block.error.is_none()
+    });
+    if all_committed {
+        tx.commit()
+            .await
+            .map_err(|e| format!("提交释放检查事务失败: {e}"))?;
+        return Ok(ReleaseCoReadingFocusResult {
+            released: false,
+            committed: true,
+        });
+    }
+    if all_queued {
+        tx.commit()
+            .await
+            .map_err(|e| format!("提交幂等释放事务失败: {e}"))?;
+        return Ok(ReleaseCoReadingFocusResult {
+            released: false,
+            committed: false,
+        });
+    }
+    if !all_processing {
+        return Err("共读焦点状态发生变化，无法安全释放".to_string());
+    }
+
+    let updated = sqlx::query(
+        r#"
+        UPDATE co_reading_blocks
+        SET status='queued', decision=NULL, annotation_id=NULL, error=NULL,
+            processed_at=NULL, updated_at=MAX(updated_at + 1, ?)
+        WHERE book_id=? AND focus_key=? AND status='processing'
+        "#,
+    )
+    .bind(now)
+    .bind(&data.book_id)
+    .bind(focus_key)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| format!("释放旧页面共读焦点失败: {e}"))?;
+    if updated.rows_affected() != data.block_keys.len() as u64 {
+        return Err("释放旧页面共读焦点时状态发生冲突".to_string());
+    }
+    tx.commit()
+        .await
+        .map_err(|e| format!("提交旧页面共读释放事务失败: {e}"))?;
+    Ok(ReleaseCoReadingFocusResult {
+        released: true,
+        committed: false,
+    })
 }
 
 pub async fn retry_blocks(
@@ -500,6 +993,24 @@ pub async fn complete_co_reading_batch(
 ) -> Result<(), String> {
     let pool = app_pool(&app_handle).await?;
     complete_batch(&pool, data).await
+}
+
+#[tauri::command]
+pub async fn persist_co_reading_focus(
+    app_handle: AppHandle,
+    data: PersistCoReadingFocusData,
+) -> Result<PersistCoReadingFocusResult, String> {
+    let pool = app_pool(&app_handle).await?;
+    persist_focus(&pool, data).await
+}
+
+#[tauri::command]
+pub async fn release_co_reading_focus(
+    app_handle: AppHandle,
+    data: ReleaseCoReadingFocusData,
+) -> Result<ReleaseCoReadingFocusResult, String> {
+    let pool = app_pool(&app_handle).await?;
+    release_focus(&pool, data).await
 }
 
 #[tauri::command]

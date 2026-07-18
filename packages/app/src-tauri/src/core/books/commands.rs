@@ -813,14 +813,15 @@ pub async fn create_book_note(
         note_data.style,
         note_data.color,
         note_data.author.unwrap_or_else(|| "human".to_string()),
+        note_data.source_note_id,
         note_data.note,
         note_data.context,
     );
 
     sqlx::query(
         r#"
-        INSERT INTO book_notes (id, book_id, type, cfi, text, style, color, author, note, context_before, context_after, created_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+        INSERT INTO book_notes (id, book_id, type, cfi, text, style, color, author, source_note_id, note, context_before, context_after, created_at, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
         "#
     )
     .bind(&book_note.id)
@@ -831,6 +832,7 @@ pub async fn create_book_note(
     .bind(&book_note.style)
     .bind(&book_note.color)
     .bind(&book_note.author)
+    .bind(&book_note.source_note_id)
     .bind(&book_note.note)
     .bind(&context_before)
     .bind(&context_after)
@@ -852,7 +854,7 @@ pub async fn get_book_notes(
 
     let rows = sqlx::query(
         r#"
-        SELECT id, book_id, type, cfi, text, style, color, author, note, context_before, context_after, created_at, updated_at
+        SELECT id, book_id, type, cfi, text, style, color, author, source_note_id, note, context_before, context_after, created_at, updated_at
         FROM book_notes
         WHERE book_id = ?1
         ORDER BY created_at ASC
@@ -901,6 +903,7 @@ pub async fn update_book_note(
             text = COALESCE(?, text),
             style = COALESCE(?, style),
             color = COALESCE(?, color),
+            source_note_id = CASE WHEN ? THEN ? ELSE source_note_id END,
             note = COALESCE(?, note),
             context_before = COALESCE(?, context_before),
             context_after = COALESCE(?, context_after),
@@ -913,6 +916,13 @@ pub async fn update_book_note(
     .bind(&update_data.text)
     .bind(&update_data.style)
     .bind(&update_data.color)
+    .bind(update_data.source_note_id.is_some())
+    .bind(
+        update_data
+            .source_note_id
+            .as_ref()
+            .and_then(|value| value.as_ref()),
+    )
     .bind(&update_data.note)
     .bind(&context_before)
     .bind(&context_after)
@@ -931,7 +941,7 @@ pub async fn update_book_note(
     // 查询更新后的笔记
     let row = sqlx::query(
         r#"
-        SELECT id, book_id, type, cfi, text, style, color, author, note, context_before, context_after, created_at, updated_at
+        SELECT id, book_id, type, cfi, text, style, color, author, source_note_id, note, context_before, context_after, created_at, updated_at
         FROM book_notes
         WHERE id = ?1
         "#
@@ -948,15 +958,29 @@ pub async fn update_book_note(
 pub async fn delete_book_note(app_handle: AppHandle, id: String) -> Result<(), String> {
     let db_pool = get_db_pool(&app_handle).await?;
 
+    let mut transaction = db_pool
+        .begin()
+        .await
+        .map_err(|e| format!("开始删除笔记事务失败: {}", e))?;
+    sqlx::query("DELETE FROM book_notes WHERE source_note_id = ?1")
+        .bind(&id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|e| format!("删除关联 AI 书评失败: {}", e))?;
+
     let result = sqlx::query("DELETE FROM book_notes WHERE id = ?1")
         .bind(&id)
-        .execute(&db_pool)
+        .execute(&mut *transaction)
         .await
         .map_err(|e| format!("删除笔记失败: {}", e))?;
 
     if result.rows_affected() == 0 {
         return Err("笔记不存在".to_string());
     }
+    transaction
+        .commit()
+        .await
+        .map_err(|e| format!("提交删除笔记事务失败: {}", e))?;
 
     Ok(())
 }

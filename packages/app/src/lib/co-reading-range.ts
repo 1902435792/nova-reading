@@ -260,9 +260,11 @@ export function getCoReadingSectionLabel(
     : `正文位置 ${sectionIndex + 1}`;
 }
 
-const MIN_CANDIDATE_LENGTH = 32;
-const HEADING_ONLY =
-  /^(第[一二三四五六七八九十百千\d]+[章节卷部篇]|chapter\s+\d+|contents?|目录|序|前言)$/iu;
+const PAGE_NUMBER_ONLY =
+  /^(?:第\s*)?(?:\d{1,4}|[０-９]{1,4}|[ivxlcdm]{1,8})(?:\s*页)?$/iu;
+const NAVIGATION_ONLY =
+  /^(?:上一页|下一页|返回目录|返回首页|目录|contents?|navigation|previous|next|home)$/iu;
+const DECORATIVE_ONLY = /^[^\p{L}\p{N}]+$/u;
 
 export function classifyRangeCandidate(
   block: CoReadingBlockUpsert,
@@ -273,10 +275,12 @@ export function classifyRangeCandidate(
   if (seenHashes.has(block.textHash))
     return { status: "filtered", reason: "重复文本" };
   seenHashes.add(block.textHash);
-  if (text.length < MIN_CANDIDATE_LENGTH)
-    return { status: "filtered", reason: "文本过短" };
-  if (HEADING_ONLY.test(text))
-    return { status: "filtered", reason: "标题或目录" };
+  if (PAGE_NUMBER_ONLY.test(text))
+    return { status: "filtered", reason: "页码" };
+  if (NAVIGATION_ONLY.test(text))
+    return { status: "filtered", reason: "导航文字" };
+  if (DECORATIVE_ONLY.test(text))
+    return { status: "filtered", reason: "装饰符号" };
   return { status: "candidate", reason: null };
 }
 

@@ -13,9 +13,9 @@ pub struct VectorizerConfig {
     pub api_key: Option<String>,
 }
 
+use super::ProcessReport;
 /// API相关的DTO结构
 use serde::Serialize;
-use super::ProcessReport;
 
 #[derive(Serialize)]
 pub struct ParsedBook {

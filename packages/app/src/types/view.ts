@@ -1,5 +1,9 @@
 import type { BookDoc } from "@/lib/document";
-import type { BookNote, BookSearchConfig, BookSearchResult } from "@/types/book";
+import type {
+  BookNote,
+  BookSearchConfig,
+  BookSearchResult,
+} from "@/types/book";
 
 export interface FoliateView extends HTMLElement {
   open: (book: BookDoc) => Promise<void>;
@@ -16,8 +20,13 @@ export interface FoliateView extends HTMLElement {
     index: number;
     anchor: (doc: Document) => Range;
   };
-  addAnnotation: (note: BookNote, remove?: boolean) => { index: number; label: string };
-  search: (config: BookSearchConfig) => AsyncGenerator<BookSearchResult | string, void, void>;
+  addAnnotation: (
+    note: BookNote,
+    remove?: boolean
+  ) => { index: number; label: string };
+  search: (
+    config: BookSearchConfig
+  ) => AsyncGenerator<BookSearchResult | string, void, void>;
   clearSearch: () => void;
   setSearchIndicator: (type: string, options: any) => void;
   select: (target: string | number | { fraction: number }) => Promise<void>;
@@ -57,8 +66,13 @@ export interface FoliateView extends HTMLElement {
     }) => void | Promise<void>;
     setStyles?: (css: string) => void;
     getContents: () => { doc: Document; index?: number; overlayer?: unknown }[];
+    getVisibleRanges?: () => { index?: number; range: Range }[];
     scrollToAnchor: (anchor: number | Range) => void;
-    addEventListener: (type: string, listener: EventListener, option?: AddEventListenerOptions) => void;
+    addEventListener: (
+      type: string,
+      listener: EventListener,
+      option?: AddEventListenerOptions
+    ) => void;
     removeEventListener: (type: string, listener: EventListener) => void;
   };
 }
@@ -74,14 +88,18 @@ export const wrappedFoliateView = (originalView: FoliateView): FoliateView => {
     return originalAddAnnotation(annotation, remove);
   };
 
-  const originalSetSearchIndicator = (originalView as any).setSearchIndicator?.bind(originalView);
+  const originalSetSearchIndicator = (
+    originalView as any
+  ).setSearchIndicator?.bind(originalView);
   if (originalSetSearchIndicator) {
     originalView.setSearchIndicator = (type: string, options: any) => {
       originalSetSearchIndicator(type, options);
     };
   } else {
     originalView.setSearchIndicator = () => {
-      console.warn("setSearchIndicator method not available in underlying view");
+      console.warn(
+        "setSearchIndicator method not available in underlying view"
+      );
     };
   }
 

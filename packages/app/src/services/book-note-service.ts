@@ -10,6 +10,7 @@ export interface BookNoteCreateData {
   style?: "highlight" | "underline" | "squiggly";
   color?: "red" | "yellow" | "green" | "blue" | "violet";
   author?: "human" | "ai";
+  sourceNoteId?: string | null;
   note: string;
   context?: {
     before: string;
@@ -24,6 +25,7 @@ export interface BookNoteUpdateData {
   text?: string;
   style?: "highlight" | "underline" | "squiggly";
   color?: "red" | "yellow" | "green" | "blue" | "violet";
+  sourceNoteId?: string | null;
   note?: string;
   context?: {
     before: string;
@@ -34,7 +36,9 @@ export interface BookNoteUpdateData {
 /**
  * 创建新的书籍笔记
  */
-export async function createBookNote(noteData: BookNoteCreateData): Promise<BookNote> {
+export async function createBookNote(
+  noteData: BookNoteCreateData
+): Promise<BookNote> {
   const result = await invoke<BookNote>("create_book_note", { noteData });
   return result;
 }
@@ -50,7 +54,10 @@ export async function getBookNotes(bookId: string): Promise<BookNote[]> {
 /**
  * 更新指定的书籍笔记
  */
-export async function updateBookNote(id: string, updateData: BookNoteUpdateData): Promise<BookNote> {
+export async function updateBookNote(
+  id: string,
+  updateData: BookNoteUpdateData
+): Promise<BookNote> {
   const result = await invoke<BookNote>("update_book_note", { id, updateData });
   return result;
 }

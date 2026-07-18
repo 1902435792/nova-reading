@@ -7,31 +7,44 @@ const SEARCH_PREFIX = "foliate-search:";
 
 const isZip = async (file) => {
   const arr = new Uint8Array(await file.slice(0, 4).arrayBuffer());
-  return arr[0] === 0x50 && arr[1] === 0x4b && arr[2] === 0x03 && arr[3] === 0x04;
+  return (
+    arr[0] === 0x50 && arr[1] === 0x4b && arr[2] === 0x03 && arr[3] === 0x04
+  );
 };
 
 const isPDF = async (file) => {
   const arr = new Uint8Array(await file.slice(0, 5).arrayBuffer());
-  return arr[0] === 0x25 && arr[1] === 0x50 && arr[2] === 0x44 && arr[3] === 0x46 && arr[4] === 0x2d;
+  return (
+    arr[0] === 0x25 &&
+    arr[1] === 0x50 &&
+    arr[2] === 0x44 &&
+    arr[3] === 0x46 &&
+    arr[4] === 0x2d
+  );
 };
 
-const isCBZ = ({ name, type }) => type === "application/vnd.comicbook+zip" || name.endsWith(".cbz");
+const isCBZ = ({ name, type }) =>
+  type === "application/vnd.comicbook+zip" || name.endsWith(".cbz");
 
-const isFB2 = ({ name, type }) => type === "application/x-fictionbook+xml" || name.endsWith(".fb2");
+const isFB2 = ({ name, type }) =>
+  type === "application/x-fictionbook+xml" || name.endsWith(".fb2");
 
 const isFBZ = ({ name, type }) =>
-  type === "application/x-zip-compressed-fb2" || name.endsWith(".fb2.zip") || name.endsWith(".fbz");
+  type === "application/x-zip-compressed-fb2" ||
+  name.endsWith(".fb2.zip") ||
+  name.endsWith(".fbz");
 
 const makeZipLoader = async (file) => {
-  const { configure, ZipReader, BlobReader, TextWriter, BlobWriter } = await import("./vendor/zip.js");
+  const { configure, ZipReader, BlobReader, TextWriter, BlobWriter } =
+    await import("./vendor/zip.js");
   configure({ useWebWorkers: false });
   const reader = new ZipReader(new BlobReader(file));
   const entries = await reader.getEntries();
   const map = new Map(entries.map((entry) => [entry.filename, entry]));
   const load =
     (f) =>
-      (name, ...args) =>
-        map.has(name) ? f(map.get(name), ...args) : null;
+    (name, ...args) =>
+      map.has(name) ? f(map.get(name), ...args) : null;
   const loadText = load((entry) => entry.getData(new TextWriter()));
   const loadBlob = load((entry, type) => entry.getData(new BlobWriter(type)));
   const getSize = (name) => map.get(name)?.uncompressedSize ?? 0;
@@ -42,18 +55,18 @@ const getFileEntries = async (entry) =>
   entry.isFile
     ? entry
     : (
-      await Promise.all(
-        Array.from(
-          await new Promise((resolve, reject) =>
-            entry.createReader().readEntries(
-              (entries) => resolve(entries),
-              (error) => reject(error),
+        await Promise.all(
+          Array.from(
+            await new Promise((resolve, reject) =>
+              entry.createReader().readEntries(
+                (entries) => resolve(entries),
+                (error) => reject(error)
+              )
             ),
-          ),
-          getFileEntries,
-        ),
-      )
-    ).flat();
+            getFileEntries
+          )
+        )
+      ).flat();
 
 const makeDirectoryLoader = async (entry) => {
   const entries = await getFileEntries(entry);
@@ -63,12 +76,14 @@ const makeDirectoryLoader = async (entry) => {
         new Promise((resolve, reject) =>
           entry.file(
             (file) => resolve([file, entry.fullPath]),
-            (error) => reject(error),
-          ),
-        ),
-    ),
+            (error) => reject(error)
+          )
+        )
+    )
   );
-  const map = new Map(files.map(([file, path]) => [path.replace(`${entry.fullPath}/`, ""), file]));
+  const map = new Map(
+    files.map(([file, path]) => [path.replace(`${entry.fullPath}/`, ""), file])
+  );
   const decoder = new TextDecoder();
   const decode = (x) => (x ? decoder.decode(x) : null);
   const getBuffer = (name) => map.get(name)?.arrayBuffer() ?? null;
@@ -78,13 +93,14 @@ const makeDirectoryLoader = async (entry) => {
   return { loadText, loadBlob, getSize };
 };
 
-export class ResponseError extends Error { }
-export class NotFoundError extends Error { }
-export class UnsupportedTypeError extends Error { }
+export class ResponseError extends Error {}
+export class NotFoundError extends Error {}
+export class UnsupportedTypeError extends Error {}
 
 const fetchFile = async (url) => {
   const res = await fetch(url);
-  if (!res.ok) throw new ResponseError(`${res.status} ${res.statusText}`, { cause: res });
+  if (!res.ok)
+    throw new ResponseError(`${res.status} ${res.statusText}`, { cause: res });
   return new File([await res.blob()], new URL(res.url).pathname);
 };
 
@@ -150,7 +166,7 @@ class CursorAutohider {
         if (this.#timeout) clearTimeout(this.#timeout);
         if (check()) this.#timeout = setTimeout(this.hide.bind(this), 1000);
       },
-      false,
+      false
     );
   }
   cloneFor(el) {
@@ -229,8 +245,10 @@ export class View extends HTMLElement {
   #pageProgress;
   #searchResults = new Map();
   #annotations = new Map();
-  #searchIndicatorConfig = { type: 'outline', options: {} };
-  #cursorAutohider = new CursorAutohider(this, () => this.hasAttribute("autohide-cursor"));
+  #searchIndicatorConfig = { type: "outline", options: {} };
+  #cursorAutohider = new CursorAutohider(this, () =>
+    this.hasAttribute("autohide-cursor")
+  );
   isFixedLayout = false;
   lastLocation;
   history = new History();
@@ -242,7 +260,11 @@ export class View extends HTMLElement {
     });
   }
   async open(book) {
-    if (typeof book === "string" || typeof book.arrayBuffer === "function" || book.isDirectory)
+    if (
+      typeof book === "string" ||
+      typeof book.arrayBuffer === "function" ||
+      book.isDirectory
+    )
       book = await makeBook(book);
     this.book = book;
     this.language = languageInfo(book.metadata?.language);
@@ -278,8 +300,12 @@ export class View extends HTMLElement {
     }
     this.renderer.setAttribute("exportparts", "head,foot,filter");
     this.renderer.addEventListener("load", (e) => this.#onLoad(e.detail));
-    this.renderer.addEventListener("relocate", (e) => this.#onRelocate(e.detail));
-    this.renderer.addEventListener("create-overlayer", (e) => e.detail.attach(this.#createOverlayer(e.detail)));
+    this.renderer.addEventListener("relocate", (e) =>
+      this.#onRelocate(e.detail)
+    );
+    this.renderer.addEventListener("create-overlayer", (e) =>
+      e.detail.attach(this.#createOverlayer(e.detail))
+    );
     this.renderer.open(book);
     this.#root.append(this.renderer);
 
@@ -291,10 +317,13 @@ export class View extends HTMLElement {
       this.mediaOverlay.addEventListener("highlight", (e) => {
         const resolved = this.resolveNavigation(e.detail.text);
         this.renderer.goTo(resolved).then(() => {
-          const { doc } = this.renderer.getContents().find((x) => (x.index = resolved.index));
+          const { doc } = this.renderer
+            .getContents()
+            .find((x) => (x.index = resolved.index));
           const el = resolved.anchor(doc);
           el.classList.add(activeClass);
-          if (playbackActiveClass) el.ownerDocument.documentElement.classList.add(playbackActiveClass);
+          if (playbackActiveClass)
+            el.ownerDocument.documentElement.classList.add(playbackActiveClass);
           lastActive = new WeakRef(el);
         });
       });
@@ -302,7 +331,10 @@ export class View extends HTMLElement {
         const el = lastActive?.deref();
         if (el) {
           el.classList.remove(activeClass);
-          if (playbackActiveClass) el.ownerDocument.documentElement.classList.remove(playbackActiveClass);
+          if (playbackActiveClass)
+            el.ownerDocument.documentElement.classList.remove(
+              playbackActiveClass
+            );
         }
       });
     }
@@ -321,8 +353,9 @@ export class View extends HTMLElement {
   }
   goToTextStart() {
     return this.goTo(
-      this.book.landmarks?.find((m) => m.type.includes("bodymatter") || m.type.includes("text"))?.href ??
-      this.book.sections.findIndex((s) => s.linear !== "no"),
+      this.book.landmarks?.find(
+        (m) => m.type.includes("bodymatter") || m.type.includes("text")
+      )?.href ?? this.book.sections.findIndex((s) => s.linear !== "no")
     );
   }
   async init({ lastLocation, showTextStart }) {
@@ -340,18 +373,21 @@ export class View extends HTMLElement {
     return this.dispatchEvent(new CustomEvent(name, { detail, cancelable }));
   }
   #onRelocate({ reason, range, index, fraction, size }) {
-    const progress = this.#sectionProgress?.getProgress(index, fraction, size) ?? {};
+    const progress =
+      this.#sectionProgress?.getProgress(index, fraction, size) ?? {};
     const tocItem = this.#tocProgress?.getProgress(index, range);
     const pageItem = this.#pageProgress?.getProgress(index, range);
     const cfi = this.getCFI(index, range);
     this.lastLocation = { ...progress, index, tocItem, pageItem, cfi, range };
-    if (reason === "snap" || reason === "page" || reason === "scroll") this.history.replaceState(cfi);
+    if (reason === "snap" || reason === "page" || reason === "scroll")
+      this.history.replaceState(cfi);
     this.#emit("relocate", this.lastLocation);
   }
   #onLoad({ doc, index }) {
     // set language and dir if not already set
     doc.documentElement.lang ||= this.language.canonical ?? "";
-    if (!this.language.isCJK) doc.documentElement.dir ||= this.language.direction ?? "";
+    if (!this.language.isCJK)
+      doc.documentElement.dir ||= this.language.direction ?? "";
 
     this.#handleLinks(doc, index);
     this.#cursorAutohider.cloneFor(doc.documentElement);
@@ -378,7 +414,11 @@ export class View extends HTMLElement {
     });
   }
   async addAnnotation(annotation, remove) {
-    const { value, indicatorType = 'outline', indicatorOptions = {} } = annotation;
+    const {
+      value,
+      indicatorType = "outline",
+      indicatorOptions = {},
+    } = annotation;
     if (value.startsWith(SEARCH_PREFIX)) {
       const cfi = value.replace(SEARCH_PREFIX, "");
       const { index, anchor } = await this.resolveNavigation(cfi);
@@ -394,10 +434,10 @@ export class View extends HTMLElement {
         // 根据指示器类型选择绘制方法
         let drawMethod;
         switch (indicatorType) {
-          case 'arrow':
+          case "arrow":
             drawMethod = Overlayer.arrow;
             break;
-          case 'outline':
+          case "outline":
           default:
             drawMethod = Overlayer.outline;
             break;
@@ -427,7 +467,9 @@ export class View extends HTMLElement {
     return this.addAnnotation(annotation, true);
   }
   #getOverlayer(index) {
-    return this.renderer.getContents().find((x) => x.index === index && x.overlayer);
+    return this.renderer
+      .getContents()
+      .find((x) => x.index === index && x.overlayer);
   }
   #createOverlayer({ doc, index }) {
     const overlayer = new Overlayer();
@@ -444,7 +486,7 @@ export class View extends HTMLElement {
           });
         }
       },
-      false,
+      false
     );
 
     const list = this.#searchResults.get(index);
@@ -453,7 +495,7 @@ export class View extends HTMLElement {
         const annotationWithConfig = {
           ...item,
           indicatorType: this.#searchIndicatorConfig.type,
-          indicatorOptions: this.#searchIndicatorConfig.options
+          indicatorOptions: this.#searchIndicatorConfig.options,
         };
         this.addAnnotation(annotationWithConfig);
       }
@@ -489,7 +531,9 @@ export class View extends HTMLElement {
     try {
       if (typeof target === "number") return { index: target };
       if (typeof target.fraction === "number") {
-        const [index, anchor] = this.#sectionProgress.getSection(target.fraction);
+        const [index, anchor] = this.#sectionProgress.getSection(
+          target.fraction
+        );
         return { index, anchor };
       }
       if (CFI.isCFI.test(target)) return this.resolveCFI(target);
@@ -527,10 +571,13 @@ export class View extends HTMLElement {
     }
   }
   deselect() {
-    for (const { doc } of this.renderer.getContents()) doc.defaultView.getSelection().removeAllRanges();
+    for (const { doc } of this.renderer.getContents())
+      doc.defaultView.getSelection().removeAllRanges();
   }
   getSectionFractions() {
-    return (this.#sectionProgress?.sectionFractions ?? []).map((x) => x + Number.EPSILON);
+    return (this.#sectionProgress?.sectionFractions ?? []).map(
+      (x) => x + Number.EPSILON
+    );
   }
   getProgressOf(index, range) {
     const tocItem = this.#tocProgress?.getProgress(index, range);
@@ -565,17 +612,21 @@ export class View extends HTMLElement {
   }
   async *#searchSection(matcher, query, index) {
     const doc = await this.book.sections[index].createDocument();
-    for (const { range, excerpt } of matcher(doc, query)) yield { cfi: this.getCFI(index, range), excerpt };
+    for (const { range, excerpt } of matcher(doc, query))
+      yield { cfi: this.getCFI(index, range), excerpt };
   }
   async *#searchBook(matcher, query) {
     const { sections } = this.book;
     for (const [index, { createDocument }] of sections.entries()) {
       if (!createDocument) continue;
       const doc = await createDocument();
-      const subitems = Array.from(matcher(doc, query), ({ range, excerpt }) => ({
-        cfi: this.getCFI(index, range),
-        excerpt,
-      }));
+      const subitems = Array.from(
+        matcher(doc, query),
+        ({ range, excerpt }) => ({
+          cfi: this.getCFI(index, range),
+          excerpt,
+        })
+      );
       const progress = (index + 1) / sections.length;
       yield { progress };
       if (subitems.length) yield { index, subitems };
@@ -585,21 +636,29 @@ export class View extends HTMLElement {
     this.clearSearch();
     const { searchMatcher } = await import("./search.js");
     const { query, index } = opts;
-    const matcher = searchMatcher(textWalker, { defaultLocale: this.language, ...opts });
-    const iter = index != null ? this.#searchSection(matcher, query, index) : this.#searchBook(matcher, query);
+    const matcher = searchMatcher(textWalker, {
+      defaultLocale: this.language,
+      ...opts,
+    });
+    const iter =
+      index != null
+        ? this.#searchSection(matcher, query, index)
+        : this.#searchBook(matcher, query);
 
     const list = [];
     this.#searchResults.set(index, list);
 
     for await (const result of iter) {
       if (result.subitems) {
-        const list = result.subitems.map(({ cfi }) => ({ value: SEARCH_PREFIX + cfi }));
+        const list = result.subitems.map(({ cfi }) => ({
+          value: SEARCH_PREFIX + cfi,
+        }));
         this.#searchResults.set(result.index, list);
         for (const item of list) {
           const itemWithConfig = {
             ...item,
             indicatorType: this.#searchIndicatorConfig.type,
-            indicatorOptions: this.#searchIndicatorConfig.options
+            indicatorOptions: this.#searchIndicatorConfig.options,
           };
           this.addAnnotation(itemWithConfig);
         }
@@ -614,7 +673,7 @@ export class View extends HTMLElement {
           const itemWithConfig = {
             ...item,
             indicatorType: this.#searchIndicatorConfig.type,
-            indicatorOptions: this.#searchIndicatorConfig.options
+            indicatorOptions: this.#searchIndicatorConfig.options,
           };
           this.addAnnotation(itemWithConfig);
         }
@@ -624,10 +683,11 @@ export class View extends HTMLElement {
     yield "done";
   }
   clearSearch() {
-    for (const list of this.#searchResults.values()) for (const item of list) this.deleteAnnotation(item);
+    for (const list of this.#searchResults.values())
+      for (const item of list) this.deleteAnnotation(item);
     this.#searchResults.clear();
   }
-  setSearchIndicator(type = 'outline', options = {}) {
+  setSearchIndicator(type = "outline", options = {}) {
     this.#searchIndicatorConfig = { type, options };
   }
   async initTTS(granularity = "word", highlight) {
@@ -638,7 +698,7 @@ export class View extends HTMLElement {
       doc,
       textWalker,
       highlight || ((range) => this.renderer.scrollToAnchor(range, true)),
-      granularity,
+      granularity
     );
   }
   startMediaOverlay() {

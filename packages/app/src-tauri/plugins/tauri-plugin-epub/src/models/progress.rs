@@ -40,16 +40,16 @@ impl ErrorStats {
             file_errors: Vec::new(),
         }
     }
-    
+
     pub fn add_file_error(&mut self, file_path: &str, error: &str) {
         self.failed_files += 1;
         self.file_errors.push(format!("{}: {}", file_path, error));
     }
-    
+
     pub fn add_chunk_error(&mut self) {
         self.failed_chunks += 1;
     }
-    
+
     pub fn add_db_error(&mut self) {
         self.failed_db_operations += 1;
     }

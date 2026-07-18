@@ -1,15 +1,15 @@
-use serde::{Deserialize, Serialize};
 use crate::models::SearchResult;
+use serde::{Deserialize, Serialize};
 
 /// 搜索模式枚举
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum SearchMode {
     #[serde(rename = "vector")]
-    VectorOnly,    // 纯向量搜索（现有模式）
+    VectorOnly, // 纯向量搜索（现有模式）
     #[serde(rename = "bm25")]
-    BM25Only,      // 纯BM25文本搜索
+    BM25Only, // 纯BM25文本搜索
     #[serde(rename = "hybrid")]
-    Hybrid,        // 混合搜索（默认）
+    Hybrid, // 混合搜索（默认）
 }
 
 impl Default for SearchMode {
@@ -35,20 +35,20 @@ impl std::str::FromStr for SearchMode {
 #[derive(Debug, Clone)]
 pub struct HybridSearchConfig {
     pub mode: SearchMode,
-    pub vector_weight: f32,    // 向量搜索权重 (0.0-1.0)
-    pub bm25_weight: f32,      // BM25搜索权重 (0.0-1.0)
-    pub k1: f32,               // BM25参数k1 (默认1.2)
-    pub b: f32,                // BM25参数b (默认0.75)
+    pub vector_weight: f32, // 向量搜索权重 (0.0-1.0)
+    pub bm25_weight: f32,   // BM25搜索权重 (0.0-1.0)
+    pub k1: f32,            // BM25参数k1 (默认1.2)
+    pub b: f32,             // BM25参数b (默认0.75)
 }
 
 impl Default for HybridSearchConfig {
     fn default() -> Self {
         Self {
             mode: SearchMode::Hybrid,
-            vector_weight: 0.7,    // 向量搜索权重70%
-            bm25_weight: 0.3,      // BM25搜索权重30%
-            k1: 1.2,               // BM25标准参数
-            b: 0.75,               // BM25标准参数
+            vector_weight: 0.7, // 向量搜索权重70%
+            bm25_weight: 0.3,   // BM25搜索权重30%
+            k1: 1.2,            // BM25标准参数
+            b: 0.75,            // BM25标准参数
         }
     }
 }
@@ -58,8 +58,8 @@ impl Default for HybridSearchConfig {
 /// 混合搜索结果
 #[derive(Debug, Clone)]
 pub struct HybridSearchResult {
-    pub combined_score: f32,          // 加权合并分数
-    pub search_result: SearchResult,  // 原始搜索结果
+    pub combined_score: f32,         // 加权合并分数
+    pub search_result: SearchResult, // 原始搜索结果
 }
 
 /// BM25统计信息

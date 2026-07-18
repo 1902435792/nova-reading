@@ -1,4 +1,4 @@
-use crate::models::{SearchMode, HybridSearchConfig};
+use crate::models::{HybridSearchConfig, SearchMode};
 
 /// 简化的搜索配置
 #[derive(Debug, Clone)]
@@ -20,8 +20,8 @@ impl Default for SimpleSearchConfig {
         Self {
             default_vector_weight: 0.7,
             default_bm25_weight: 0.3,
-            bm25_k1: 1.2,  // 标准BM25参数
-            bm25_b: 0.75,  // 标准BM25参数
+            bm25_k1: 1.2, // 标准BM25参数
+            bm25_b: 0.75, // 标准BM25参数
             enable_smart_weights: true,
         }
     }

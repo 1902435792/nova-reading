@@ -14,16 +14,32 @@ interface NotepadContentProps {
   onCloseDigest: () => void;
 }
 
-export const NotepadContent = ({ bookId, showDigest, onOpenDigest, onCloseDigest }: NotepadContentProps) => {
-  const { annotations, status: annotationStatus, handleDeleteAnnotation } = useAnnotations({ bookId });
+export const NotepadContent = ({
+  bookId,
+  showDigest,
+  onOpenDigest,
+  onCloseDigest,
+}: NotepadContentProps) => {
+  const {
+    annotations,
+    status: annotationStatus,
+    handleDeleteAnnotation,
+    handleGenerateAiReview,
+  } = useAnnotations({ bookId });
   const { activeBook } = useAppReaderStore();
   const progress = useReaderStore((state) => state.progress);
-  const pendingAnnotationId = useLayoutStore((state) => state.pendingNotepadAnnotationId);
-  const clearPendingAnnotation = useLayoutStore((state) => state.clearPendingNotepadAnnotation);
+  const pendingAnnotationId = useLayoutStore(
+    (state) => state.pendingNotepadAnnotationId
+  );
+  const clearPendingAnnotation = useLayoutStore(
+    (state) => state.clearPendingNotepadAnnotation
+  );
 
   useEffect(() => {
     if (!pendingAnnotationId || annotationStatus !== "success") return;
-    const element = document.querySelector<HTMLElement>(`[data-annotation-id="${CSS.escape(pendingAnnotationId)}"]`);
+    const element = document.querySelector<HTMLElement>(
+      `[data-annotation-id="${CSS.escape(pendingAnnotationId)}"]`
+    );
     if (element) {
       element.scrollIntoView({ block: "center", behavior: "smooth" });
       element.focus({ preventScroll: true });
@@ -45,7 +61,10 @@ export const NotepadContent = ({ bookId, showDigest, onOpenDigest, onCloseDigest
 
   return (
     <div className="flex h-full flex-col">
-      <NotepadHeader annotationCount={annotations.length} onOpenDigest={onOpenDigest} />
+      <NotepadHeader
+        annotationCount={annotations.length}
+        onOpenDigest={onOpenDigest}
+      />
       <div className="flex-1 overflow-y-auto">
         <div className="space-y-2 p-1">
           {annotationStatus === "pending" ? (
@@ -67,6 +86,11 @@ export const NotepadContent = ({ bookId, showDigest, onOpenDigest, onCloseDigest
                 annotation={annotation}
                 selected={pendingAnnotationId === annotation.id}
                 onDelete={handleDeleteAnnotation}
+                onGenerateAiReview={handleGenerateAiReview}
+                hasAiReview={annotations.some(
+                  (item) =>
+                    item.author === "ai" && item.sourceNoteId === annotation.id
+                )}
               />
             ))
           )}

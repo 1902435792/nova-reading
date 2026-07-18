@@ -21,7 +21,7 @@ interface ReadingFootprintStorage {
 }
 
 export function shouldOpenReadingFootprint(annotation: BookNote): boolean {
-  return annotation.author === "ai";
+  return annotation.author === "ai" && !annotation.sourceNoteId;
 }
 
 export function createReadingFootprintTarget(

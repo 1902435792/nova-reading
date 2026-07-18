@@ -3,14 +3,14 @@ use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use crate::database::VectorDatabase;
 use crate::epub::EpubReader;
-use crate::pipeline::process_epub_to_db;
+use crate::epub::{find_toc_ncx_in_mdbook, flatten_toc, parse_toc_file};
 use crate::models::ProgressUpdate;
-use crate::state::EpubState;
-use crate::epub::{parse_toc_file, find_toc_ncx_in_mdbook, flatten_toc};
 use crate::models::{
-    DocumentChunk, ProcessOptions, VectorizerConfig, FlatTocNode,
-    ParsedBook, IndexResult, MdbookResult
+    DocumentChunk, FlatTocNode, IndexResult, MdbookResult, ParsedBook, ProcessOptions,
+    VectorizerConfig,
 };
+use crate::pipeline::process_epub_to_db;
+use crate::state::EpubState;
 use epub2mdbook::convert_epub_to_mdbook;
 
 /// Parse an EPUB under $AppData/books/{book_id} and return basic metadata.
@@ -206,9 +206,9 @@ pub async fn search_db<R: Runtime>(
     model: String,
     api_key: Option<String>,
     // 新增混合搜索参数
-    search_mode: Option<String>,      // "vector", "bm25", "hybrid"
-    vector_weight: Option<f32>,       // 向量权重 (0.0-1.0)
-    bm25_weight: Option<f32>,         // BM25权重 (0.0-1.0)
+    search_mode: Option<String>, // "vector", "bm25", "hybrid"
+    vector_weight: Option<f32>,  // 向量权重 (0.0-1.0)
+    bm25_weight: Option<f32>,    // BM25权重 (0.0-1.0)
 ) -> Result<Vec<SearchItemDto>, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let book_dir = app_data_dir.join("books").join(book_id);
@@ -264,15 +264,16 @@ pub fn get_chunk_with_context<R: Runtime>(
     if book_id.trim().is_empty() {
         return Err("book_id is empty".into());
     }
-    
+
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let book_dir = app_data_dir.join("books").join(&book_id);
     let db_path = book_dir.join("vectors.sqlite");
-    
+
     let db = VectorDatabase::new(&db_path, 1024).map_err(|e| e.to_string())?;
-    let chunks = db.get_chunk_with_context(chunk_id, prev_count, next_count)
+    let chunks = db
+        .get_chunk_with_context(chunk_id, prev_count, next_count)
         .map_err(|e| e.to_string())?;
-    
+
     Ok(chunks.into_iter().map(DocumentChunkDto::from).collect())
 }
 
@@ -293,7 +294,9 @@ pub fn get_toc_chunks<R: Runtime>(
     let db_path = book_dir.join("vectors.sqlite");
 
     let db = VectorDatabase::new(&db_path, 1024).map_err(|e| e.to_string())?;
-    let chunks = db.get_chunks_by_chapter_title(&chapter_title).map_err(|e| e.to_string())?;
+    let chunks = db
+        .get_chunks_by_chapter_title(&chapter_title)
+        .map_err(|e| e.to_string())?;
 
     Ok(chunks.into_iter().map(DocumentChunkDto::from).collect())
 }
@@ -310,15 +313,16 @@ pub fn get_chunks_by_range<R: Runtime>(
     if book_id.trim().is_empty() {
         return Err("book_id is empty".into());
     }
-    
+
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let book_dir = app_data_dir.join("books").join(&book_id);
     let db_path = book_dir.join("vectors.sqlite");
-    
+
     let db = VectorDatabase::new(&db_path, 1024).map_err(|e| e.to_string())?;
-    let chunks = db.get_chunks_by_global_index_range(start_index, end_index)
+    let chunks = db
+        .get_chunks_by_global_index_range(start_index, end_index)
         .map_err(|e| e.to_string())?;
-    
+
     Ok(chunks.into_iter().map(DocumentChunkDto::from).collect())
 }
 
