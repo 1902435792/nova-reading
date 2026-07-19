@@ -4,41 +4,79 @@ import {
   buildCoReadingDiaryRequest,
   resolveCoReadingDiaryEndpoint,
 } from "@/lib/co-reading-diary-request";
-import { resolveCoReadingModel } from "@/lib/co-reading-model";
+import {
+  parseConfirmedVcpCoReadingDiaryResponse,
+  type VcpCoReadingDiaryResponse,
+} from "@/lib/co-reading-diary-response";
+import { markCoReadingDiaryWritten } from "@/services/co-reading-service";
 import { useProviderStore } from "@/store/provider-store";
-import type { CoReadingSettings } from "@/types/co-reading";
 import { fetch as fetchTauri } from "@tauri-apps/plugin-http";
 
-interface VcpDiaryResponse {
-  choices?: Array<{ message?: { content?: string } }>;
-  error?: { message?: string };
+const CO_READING_DIARY_TIMEOUT_MS = 120_000;
+
+export interface CoReadingDiaryWriteResult {
+  message: string;
+  diaryId: string;
+  writtenCount: number;
 }
 
 export async function createCoReadingDiary(
-  data: CoReadingDiaryPayload,
-  settings?: Pick<CoReadingSettings, "modelProviderId" | "modelId"> | null,
-): Promise<string> {
+  bookId: string,
+  payload: CoReadingDiaryPayload,
+): Promise<CoReadingDiaryWriteResult> {
   const state = useProviderStore.getState();
-  const selected = resolveCoReadingModel(settings, state.selectedModel, state.modelProviders);
-  if (!selected) throw new Error("请先配置并选择 VCP 模型");
+  const selected = state.selectedModel;
+  if (!selected) throw new Error("请先在问答 Agent 中选择可用模型");
 
-  const provider = state.modelProviders.find((item) => item.provider === selected.providerId);
+  const provider = state.modelProviders.find(
+    (item) => item.provider === selected.providerId && item.active,
+  );
+  const model = provider?.models.find(
+    (item) => item.id === selected.modelId && item.active !== false,
+  );
   const baseUrl = provider?.baseUrl?.trim();
   const apiKey = provider?.apiKey?.trim();
-  if (!baseUrl || !apiKey) throw new Error("当前模型缺少可用的服务地址或 API Key");
+  if (!provider || !model || !baseUrl || !apiKey) {
+    throw new Error("问答 Agent 当前模型不可用，或缺少服务地址/API Key");
+  }
 
   const response = await fetchTauri(resolveCoReadingDiaryEndpoint(baseUrl), {
     method: "POST",
     headers: buildCoReadingDiaryHeaders(apiKey),
-    body: JSON.stringify(buildCoReadingDiaryRequest(data, selected.modelId)),
+    body: JSON.stringify(buildCoReadingDiaryRequest(payload, selected.modelId)),
+    signal: AbortSignal.timeout(CO_READING_DIARY_TIMEOUT_MS),
   });
-  const body = (await response.json().catch(() => null)) as VcpDiaryResponse | null;
+  const body = (await response
+    .json()
+    .catch(() => null)) as VcpCoReadingDiaryResponse | null;
 
   if (!response.ok) {
-    throw new Error(body?.error?.message?.trim() || `共读日记写入失败（HTTP ${response.status}）`);
+    throw new Error(
+      body?.error?.message?.trim() ||
+        `VCP 共读 Agent 写入失败（HTTP ${response.status}）`,
+    );
   }
 
-  const message = body?.choices?.[0]?.message?.content?.trim();
-  if (!message) throw new Error("共读日记服务未返回结果");
-  return message;
+  // Parsing must succeed before touching the local ledger. In particular, a
+  // malformed 2xx response must not be upgraded into success by a local ID.
+  const confirmed = parseConfirmedVcpCoReadingDiaryResponse(body);
+  try {
+    const ledger = await markCoReadingDiaryWritten({
+      bookId,
+      diaryId: confirmed.diaryId,
+      sourceKeys: payload.sourceKeys,
+    });
+    return {
+      message: confirmed.message,
+      diaryId: ledger.diaryId,
+      writtenCount: ledger.writtenCount,
+    };
+  } catch (error) {
+    throw new Error(
+      `VCP 已返回写入成功，但本地来源账本更新失败；请先刷新记录，避免立即重复写入。${
+        error instanceof Error ? ` ${error.message}` : ""
+      }`,
+      { cause: error },
+    );
+  }
 }

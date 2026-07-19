@@ -1,10 +1,20 @@
 import { Button } from "@/components/ui/button";
 import { useChatState } from "@/hooks/use-chat-state";
-import { useReaderStore } from "@/pages/reader/components/reader-provider";
+import { createVisibleReadingPosition } from "@/lib/reading-position";
+import {
+  useReaderStore,
+  useReaderStoreApi,
+} from "@/pages/reader/components/reader-provider";
 import { useAppSettingsStore } from "@/store/app-settings-store";
 import { useThemeStore } from "@/store/theme-store";
 import type { ReadingFootprintTarget } from "@/types/co-reading";
-import { BookOpenText, History, MessageCirclePlus, MessagesSquare, Settings } from "lucide-react";
+import {
+  BookOpenText,
+  History,
+  MessageCirclePlus,
+  MessagesSquare,
+  Settings,
+} from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { ChatContainerRoot } from "../prompt-kit/chat-container";
 import { ScrollButton } from "../prompt-kit/scroll-button";
@@ -20,6 +30,7 @@ interface ChatContentProps {
 }
 
 function ChatContent({ bookId }: ChatContentProps) {
+  const readerStore = useReaderStoreApi();
   const { toggleSettingsDialog } = useAppSettingsStore();
   const { autoScroll } = useThemeStore();
   const [toolDetail, setToolDetail] = useState<any>(null);
@@ -37,9 +48,18 @@ function ChatContent({ bookId }: ChatContentProps) {
     try {
       const contents = view.renderer.getContents?.();
       if (!Array.isArray(contents) || contents.length === 0) return "";
-      const fullText = contents
-        .map(({ doc }) => {
-          if (!doc?.body) return "";
+      const visibleDocs = (view.renderer.getVisibleRanges?.() ?? [])
+        .map((item) => item.range?.startContainer.ownerDocument)
+        .filter((doc): doc is Document => Boolean(doc));
+      const docs =
+        visibleDocs.length > 0
+          ? [...new Set(visibleDocs)]
+          : contents
+              .map(({ doc }) => doc)
+              .filter((doc): doc is Document => Boolean(doc));
+      const fullText = docs
+        .map((doc) => {
+          if (!doc.body) return "";
           return doc.body.innerText || doc.body.textContent || "";
         })
         .join("\n")
@@ -83,6 +103,29 @@ function ChatContent({ bookId }: ChatContentProps) {
       activeContext,
       activeSectionLabel: progress?.sectionLabel,
       activePageText: getCurrentPageText(),
+      activeReadingPosition: createVisibleReadingPosition({
+        location: progress?.location,
+        sectionIndex: progress?.sectionIndex,
+        sectionLabel: progress?.sectionLabel,
+        pageCurrent: progress?.pageinfo?.current,
+        pageTotal: progress?.pageinfo?.total,
+      }),
+    },
+    getLiveChatContext: () => {
+      const current = readerStore.getState();
+      return {
+        activeBookId: bookId,
+        activeContext: current.activeContext,
+        activeSectionLabel: current.progress?.sectionLabel,
+        activePageText: getCurrentPageText(),
+        activeReadingPosition: createVisibleReadingPosition({
+          location: current.progress?.location ?? current.location,
+          sectionIndex: current.progress?.sectionIndex,
+          sectionLabel: current.progress?.sectionLabel,
+          pageCurrent: current.progress?.pageinfo?.current,
+          pageTotal: current.progress?.pageinfo?.total,
+        }),
+      };
     },
     setActiveBookId: () => {},
     setActiveContext: setActiveContext,
@@ -100,11 +143,19 @@ function ChatContent({ bookId }: ChatContentProps) {
       <div className="flex flex-1 flex-col justify-end gap-3">
         <div className="flex flex-col items-start gap-4 pl-2">
           <div className="rounded-full bg-muted/70 p-3 shadow-md dark:bg-neutral-800/90">
-            <img className="size-8" src="https://www.notion.so/_assets/9ade71d75a1c0e93.png" alt="" />
+            <img
+              className="size-8"
+              src="https://www.notion.so/_assets/9ade71d75a1c0e93.png"
+              alt=""
+            />
           </div>
           <div className="space-y-2">
-            <h3 className="font-semibold text-neutral-900 text-xl dark:text-neutral-50">AI 阅读助手</h3>
-            <p className="max-w-md text-sm dark:text-neutral-400">直接提问，或使用下方的快捷按钮开始。</p>
+            <h3 className="font-semibold text-neutral-900 text-xl dark:text-neutral-50">
+              AI 阅读助手
+            </h3>
+            <p className="max-w-md text-sm dark:text-neutral-400">
+              直接提问，或使用下方的快捷按钮开始。
+            </p>
           </div>
         </div>
       </div>
@@ -195,7 +246,11 @@ function ChatContent({ bookId }: ChatContentProps) {
         />
       )}
 
-      <MindmapDialog open={showMindmapDialog} onOpenChange={setShowMindmapDialog} toolPart={toolDetail} />
+      <MindmapDialog
+        open={showMindmapDialog}
+        onOpenChange={setShowMindmapDialog}
+        toolPart={toolDetail}
+      />
     </main>
   );
 }
@@ -205,7 +260,7 @@ type SideChatMode = "chat" | "co-reading";
 export default function SideChat({ bookId }: ChatContentProps) {
   const storageKey = `deepreader:side-chat-mode:${bookId ?? "global"}`;
   const readingFootprintTarget = useReaderStore(
-    (state) => state.pendingReadingFootprint,
+    (state) => state.pendingReadingFootprint
   ) as ReadingFootprintTarget | null;
   const [mode, setMode] = useState<SideChatMode>(() => {
     if (readingFootprintTarget) return "co-reading";
@@ -218,13 +273,20 @@ export default function SideChat({ bookId }: ChatContentProps) {
   }, [mode, storageKey]);
 
   useEffect(() => {
-    if (!readingFootprintTarget || readingFootprintTarget.bookId !== bookId) return;
+    if (!readingFootprintTarget || readingFootprintTarget.bookId !== bookId)
+      return;
     setMode("co-reading");
-    window.localStorage.setItem(`deepreader:co-reading-expanded:${readingFootprintTarget.bookId}`, "true");
+    window.localStorage.setItem(
+      `deepreader:co-reading-expanded:${readingFootprintTarget.bookId}`,
+      "true"
+    );
   }, [bookId, readingFootprintTarget]);
 
   return (
-    <div id="chat-sidebar" className="flex h-full flex-col overflow-hidden bg-background">
+    <div
+      id="chat-sidebar"
+      className="flex h-full flex-col overflow-hidden bg-background"
+    >
       <div className="grid grid-cols-2 gap-1 border-b px-2 py-1.5">
         <button
           type="button"
@@ -241,7 +303,9 @@ export default function SideChat({ bookId }: ChatContentProps) {
         <button
           type="button"
           className={`flex h-7 items-center justify-center gap-1.5 rounded-md text-xs transition-colors ${
-            mode === "co-reading" ? "bg-primary/10 font-medium text-primary" : "text-muted-foreground hover:bg-muted"
+            mode === "co-reading"
+              ? "bg-primary/10 font-medium text-primary"
+              : "text-muted-foreground hover:bg-muted"
           }`}
           onClick={() => setMode("co-reading")}
         >
@@ -253,7 +317,10 @@ export default function SideChat({ bookId }: ChatContentProps) {
         <ChatContent bookId={bookId} />
       </div>
       {mode === "co-reading" && bookId && (
-        <CoReadingPanelV2 bookId={bookId} readingFootprintTarget={readingFootprintTarget} />
+        <CoReadingPanelV2
+          bookId={bookId}
+          readingFootprintTarget={readingFootprintTarget}
+        />
       )}
     </div>
   );

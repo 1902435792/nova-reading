@@ -96,15 +96,19 @@ export function useCoReading(bookId: string, isVisible: boolean): void {
     const leading = visibleBlocksRef.current[0];
     const visibleFocus = visibleFocusRef.current;
     const visibleKeys = new Set(visibleFocus?.blockKeys ?? []);
-    const persistedVisible =
-      store
-        .getState()
-        .coReadingSnapshot?.blocks.filter((block) =>
-          visibleKeys.has(block.blockKey)
-        ) ?? [];
+    const allBlocks = store.getState().coReadingSnapshot?.blocks ?? [];
+    const persistedVisible = allBlocks.filter((block) =>
+      visibleKeys.has(block.blockKey)
+    );
+    const visibleTerminalBlockCount = persistedVisible.filter(
+      (block) => block.status === "silent" || block.status === "annotated"
+    ).length;
+    const historicalQueuedBlockCount = allBlocks.filter(
+      (block) => block.status === "queued" && !visibleKeys.has(block.blockKey)
+    ).length;
     store.getState().setCoReadingRuntime({
       visibleBlockCount: visibleFocus?.blockKeys.length ?? 0,
-      visibleQueuedBlockCount: visibleBlocksRef.current.filter(
+      visibleQueuedBlockCount: persistedVisible.filter(
         (block) => block.status === "queued"
       ).length,
       visibleFailedBlockCount: persistedVisible.filter(
@@ -113,6 +117,8 @@ export function useCoReading(bookId: string, isVisible: boolean): void {
       leadingBlockKey: leading?.blockKey ?? visibleFocus?.blockKeys[0] ?? null,
       leadingBlockDwellMs: leading?.dwellMs ?? 0,
       focusKey: visibleFocus?.focusKey ?? null,
+      historicalQueuedBlockCount,
+      visibleTerminalBlockCount,
       runBlocked:
         runBlockedRef.current &&
         blockedFocusKeyRef.current === visibleFocus?.focusKey,
@@ -481,6 +487,7 @@ export function useCoReading(bookId: string, isVisible: boolean): void {
       });
       try {
         const latest = await refreshSnapshot();
+        updateRuntime();
         const nextQueued = getVisibleQueuedBlocks(latest);
         const nextFocus = selectVisibleQueuedFocus(nextQueued);
         if (

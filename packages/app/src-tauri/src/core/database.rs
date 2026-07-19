@@ -153,6 +153,28 @@ pub(crate) async fn run_migrations(pool: &SqlitePool) -> Result<(), Box<dyn std:
             .await?;
     }
 
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS co_reading_diary_entries (
+            id TEXT PRIMARY KEY NOT NULL,
+            book_id TEXT NOT NULL,
+            source_kind TEXT NOT NULL CHECK (source_kind IN ('ordinary', 'range')),
+            source_key TEXT NOT NULL,
+            written_at INTEGER NOT NULL,
+            diary_id TEXT NOT NULL,
+            FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE,
+            UNIQUE (book_id, source_key)
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_co_reading_diary_entries_book ON co_reading_diary_entries(book_id, written_at DESC)",
+    )
+    .execute(pool)
+    .await?;
+
     let range_table_exists = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='co_reading_range_tasks'",
     )

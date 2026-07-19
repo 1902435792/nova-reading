@@ -45,6 +45,7 @@ export interface BookNote {
   bookHash?: string;
   id: string;
   type: BookNoteType;
+  /** Canonical Foliate reading position; annotation lists sort this before timestamps. */
   cfi: string;
   text?: string;
   style?: HighlightStyle;

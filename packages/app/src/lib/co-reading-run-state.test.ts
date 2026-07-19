@@ -4,6 +4,7 @@ import {
   combineAbortSignals,
   coordinateRangeWorkerLease,
   CoReadingFocusCancelledError,
+  getCoReadingRuntimeLabel,
   isClaimedFocusCommitted,
   isCoReadingFocusCancellation,
   isRangeTakeoverCancellation,
@@ -85,6 +86,37 @@ test("ordinary focus leases require the same ordered visible page and use a dist
   const error = new CoReadingFocusCancelledError();
   assert.equal(isCoReadingFocusCancellation(error), true);
   assert.equal(isCoReadingFocusCancellation(new Error(error.message)), false);
+});
+test("runtime labels distinguish silent, follow, ready, processing and history states", () => {
+  const base = {
+    status: "active" as const,
+    isProcessing: false,
+    runBlocked: false,
+    visibleQueuedBlockCount: 0,
+    visibleBlockCount: 3,
+    visibleTerminalBlockCount: 0,
+    visibleFailedBlockCount: 0,
+    historicalQueuedBlockCount: 0,
+  };
+  assert.equal(
+    getCoReadingRuntimeLabel({ ...base, isProcessing: true }),
+    "AI正在阅读当前页"
+  );
+  assert.equal(
+    getCoReadingRuntimeLabel({ ...base, visibleQueuedBlockCount: 3 }),
+    "当前一页已就绪，等待3个正文"
+  );
+  assert.equal(getCoReadingRuntimeLabel(base), "正在跟随阅读");
+  assert.equal(
+    getCoReadingRuntimeLabel({
+      ...base,
+      visibleBlockCount: 0,
+      historicalQueuedBlockCount: 2,
+    }),
+    "历史待处理"
+  );
+  assert.equal(getCoReadingRuntimeLabel({ ...base, runBlocked: true }), "静默");
+  assert.equal(getCoReadingRuntimeLabel({ ...base, status: "paused" }), "静默");
 });
 
 test("a failed run remains blocked even when settings are active", () => {

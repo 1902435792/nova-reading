@@ -17,10 +17,10 @@ import {
   getCoReadingDiarySelectionState,
 } from "@/lib/co-reading-diary";
 import { createCoReadingDiary } from "@/services/co-reading-diary-service";
-import { getCoReadingRangeSnapshot } from "@/services/co-reading-service";
-import type { CoReadingFootprint, CoReadingSettings } from "@/types/co-reading";
+import { getCoReadingDiarySources } from "@/services/co-reading-service";
+import type { CoReadingDiarySourceRecord } from "@/types/co-reading";
 import { LoaderCircle, NotebookPen } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 interface CoReadingDiaryDialogProps {
@@ -28,31 +28,51 @@ interface CoReadingDiaryDialogProps {
   onOpenChange: (open: boolean) => void;
   bookId: string;
   bookTitle: string;
-  settings: Pick<CoReadingSettings, "modelProviderId" | "modelId">;
 }
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export function CoReadingDiaryDialog({ open, onOpenChange, bookId, bookTitle, settings }: CoReadingDiaryDialogProps) {
-  const [requestedCount, setRequestedCount] = useState(CO_READING_DIARY_DEFAULT_COUNT);
-  const [footprints, setFootprints] = useState<CoReadingFootprint[]>([]);
+export function CoReadingDiaryDialog({
+  open,
+  onOpenChange,
+  bookId,
+  bookTitle,
+}: CoReadingDiaryDialogProps) {
+  const [requestedCount, setRequestedCount] = useState(
+    CO_READING_DIARY_DEFAULT_COUNT
+  );
+  const [sources, setSources] = useState<CoReadingDiarySourceRecord[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [feedback, setFeedback] = useState<{ kind: "success" | "error"; message: string } | null>(null);
+  const [feedback, setFeedback] = useState<{
+    kind: "success" | "error";
+    message: string;
+  } | null>(null);
+
+  const loadSources = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      setSources(await getCoReadingDiarySources(bookId));
+    } finally {
+      setIsLoading(false);
+    }
+  }, [bookId]);
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    setIsLoading(true);
     setFeedback(null);
-    getCoReadingRangeSnapshot(bookId)
-      .then((snapshot) => {
-        if (!cancelled) setFootprints(snapshot.footprints);
+    setIsLoading(true);
+    getCoReadingDiarySources(bookId)
+      .then((records) => {
+        if (!cancelled) setSources(records);
       })
       .catch((error) => {
-        if (!cancelled) setFeedback({ kind: "error", message: errorMessage(error) });
+        if (!cancelled) {
+          setFeedback({ kind: "error", message: errorMessage(error) });
+        }
       })
       .finally(() => {
         if (!cancelled) setIsLoading(false);
@@ -63,20 +83,35 @@ export function CoReadingDiaryDialog({ open, onOpenChange, bookId, bookTitle, se
   }, [bookId, open]);
 
   const selection = useMemo(
-    () => getCoReadingDiarySelectionState(footprints, requestedCount),
-    [footprints, requestedCount],
+    () => getCoReadingDiarySelectionState(sources, requestedCount),
+    [requestedCount, sources]
   );
-  const { eligibleCount, selectedCount, validCount } = selection;
+  const {
+    totalCount,
+    activeExistingCount,
+    eligibleCount,
+    unwrittenCount,
+    alreadyWrittenCount,
+    selectedCount,
+    validCount,
+  } = selection;
 
   const handleSubmit = async () => {
     try {
       setIsSubmitting(true);
       setFeedback(null);
-      const payload = buildCoReadingDiaryPayload(bookTitle, footprints, requestedCount);
-      const message = await createCoReadingDiary(payload, settings);
-      const successMessage = message.trim() || `已将 ${payload.selectedCount} 条共读记录写入今日日记`;
+      const payload = buildCoReadingDiaryPayload(
+        bookTitle,
+        sources,
+        requestedCount
+      );
+      const result = await createCoReadingDiary(bookId, payload);
+      const successMessage =
+        result.message ||
+        `VCP 已将 ${result.writtenCount} 条共读记录写入今日日记`;
       setFeedback({ kind: "success", message: successMessage });
       toast.success(successMessage);
+      await loadSources();
     } catch (error) {
       const message = errorMessage(error);
       setFeedback({ kind: "error", message });
@@ -87,21 +122,25 @@ export function CoReadingDiaryDialog({ open, onOpenChange, bookId, bookTitle, se
   };
 
   return (
-    <Dialog open={open} onOpenChange={(nextOpen) => !isSubmitting && onOpenChange(nextOpen)}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => !isSubmitting && onOpenChange(nextOpen)}
+    >
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <NotebookPen className="size-5 text-primary" />
-            共读日记
+            Agent
           </DialogTitle>
           <DialogDescription className="px-0">
-            严格按时间选择《{bookTitle}》最近的 Nova 共读记录，交给专用日记服务整理。
+            从《{bookTitle}》尚未写入的共读记录中选取最近一段阅读脉络，使用问答
+            Agent 当前模型交给 VCP 后端整理并写入日记。
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 p-4">
           <div>
-            <p className="mb-2 font-medium text-sm">最近记录条数</p>
+            <p className="mb-2 font-medium text-sm">本次最多写入</p>
             <div className="flex flex-wrap gap-2">
               {CO_READING_DIARY_COUNT_PRESETS.map((count) => (
                 <Button
@@ -124,31 +163,64 @@ export function CoReadingDiaryDialog({ open, onOpenChange, bookId, bookTitle, se
                   max={CO_READING_DIARY_MAX_COUNT}
                   step={1}
                   value={requestedCount}
-                  onChange={(event) => setRequestedCount(Number(event.target.value))}
+                  onChange={(event) =>
+                    setRequestedCount(Number(event.target.value))
+                  }
                   disabled={isSubmitting}
-                  aria-label="自定义共读记录条数"
+                  aria-label="自定义 Agent 记录条数"
                 />
               </label>
             </div>
             {!validCount && (
               <p className="mt-2 text-destructive text-xs">
-                请输入 {CO_READING_DIARY_MIN_COUNT}–{CO_READING_DIARY_MAX_COUNT} 的整数。
+                请输入 {CO_READING_DIARY_MIN_COUNT}–{CO_READING_DIARY_MAX_COUNT}{" "}
+                的整数。
               </p>
             )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
+            <div className="rounded-lg border bg-muted/40 p-3">
+              <p className="text-muted-foreground text-xs">全部共读来源</p>
+              <p className="mt-1 font-semibold">{totalCount}</p>
+            </div>
+            <div className="rounded-lg border bg-muted/40 p-3">
+              <p className="text-muted-foreground text-xs">现存唯一记录</p>
+              <p className="mt-1 font-semibold">{activeExistingCount}</p>
+            </div>
+            <div className="rounded-lg border bg-muted/40 p-3">
+              <p className="text-muted-foreground text-xs">符合写入条件</p>
+              <p className="mt-1 font-semibold">{eligibleCount}</p>
+            </div>
+            <div className="rounded-lg border bg-muted/40 p-3">
+              <p className="text-muted-foreground text-xs">尚未写入</p>
+              <p className="mt-1 font-semibold">{unwrittenCount}</p>
+            </div>
+            <div className="rounded-lg border bg-muted/40 p-3">
+              <p className="text-muted-foreground text-xs">已经写入</p>
+              <p className="mt-1 font-semibold">{alreadyWrittenCount}</p>
+            </div>
           </div>
 
           <div className="rounded-lg border bg-muted/40 p-3 text-sm">
             {isLoading ? (
               <p className="flex items-center gap-2 text-muted-foreground">
                 <LoaderCircle className="size-4 animate-spin" />
-                正在读取 AI 共读记录…
+                正在读取共读记录…
               </p>
-            ) : eligibleCount === 0 ? (
-              <p className="text-muted-foreground">还没有可写入的 AI 共读记录，请先完成一次 Nova 共读。</p>
-            ) : eligibleCount < requestedCount ? (
-              <p>现有 {eligibleCount} 条记录，将全部写入。</p>
+            ) : activeExistingCount === 0 ? (
+              <p className="text-muted-foreground">
+                当前没有现存的 AI 共读记录。
+              </p>
+            ) : unwrittenCount === 0 ? (
+              <p className="text-muted-foreground">
+                当前符合条件的记录都已经写入日记。
+              </p>
             ) : (
-              <p>将按最新时间写入 {selectedCount} 条记录。</p>
+              <p>
+                本次将选取 {selectedCount}{" "}
+                条尚未写入记录，并按阅读位置正序提交：前页/前段在前，后页/后段在后。
+              </p>
             )}
           </div>
 
@@ -167,7 +239,12 @@ export function CoReadingDiaryDialog({ open, onOpenChange, bookId, bookTitle, se
         </div>
 
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={isSubmitting}>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={isSubmitting}
+          >
             取消
           </Button>
           <Button
@@ -178,10 +255,10 @@ export function CoReadingDiaryDialog({ open, onOpenChange, bookId, bookTitle, se
             {isSubmitting ? (
               <>
                 <LoaderCircle className="size-4 animate-spin" />
-                正在写入…
+                VCP 正在写入…
               </>
             ) : (
-              `写入今日日记 (${selectedCount})`
+              `交给 VCP 写入 (${selectedCount})`
             )}
           </Button>
         </DialogFooter>

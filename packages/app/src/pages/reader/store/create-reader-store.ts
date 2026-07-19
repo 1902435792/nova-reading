@@ -91,6 +91,8 @@ export const createReaderStore = (bookId: string) => {
       leadingBlockKey: null,
       leadingBlockDwellMs: 0,
       focusKey: null,
+      historicalQueuedBlockCount: 0,
+      visibleTerminalBlockCount: 0,
       processingBlockCount: 0,
       processingStartedAt: null,
       runBlocked: false,

@@ -3,6 +3,7 @@ import { useForceUpdate } from "@/hooks/use-force-update";
 import { useModelSelector } from "@/hooks/use-model-selector";
 import type { ReasoningTimes } from "@/hooks/use-reasoning-timer";
 import { useTextEventHandler } from "@/hooks/use-text-event";
+import type { VisibleReadingPosition } from "@/lib/reading-position";
 import { generateContextWithAI } from "@/services/ai-context-service";
 import {
   createThread,
@@ -59,7 +60,10 @@ export interface UseChatStateReturn {
   handleBackFromThreads: () => void;
 
   // 其他
-  handleReasoningTimesUpdate: (messageId: string, reasoningTimes: ReasoningTimes) => void;
+  handleReasoningTimesUpdate: (
+    messageId: string,
+    reasoningTimes: ReasoningTimes
+  ) => void;
   canRetry: boolean;
 }
 
@@ -68,12 +72,16 @@ export interface ChatContext {
   activeContext?: string;
   activeSectionLabel?: string;
   activePageText?: string;
+  /** Live Foliate location captured from the reader store at render/send time. */
+  activeReadingPosition?: VisibleReadingPosition;
   activeSelectionText?: string;
   messageCount?: number; // 当前对话诚话数，用于控制元信息注入频率
 }
 
 interface UseChatStateOptions {
   chatContext: ChatContext;
+  /** Optional reader-store resolver used again at the transport send boundary. */
+  getLiveChatContext?: () => ChatContext;
   setActiveBookId: (bookId: string) => void;
   setActiveContext: (context: string | undefined) => void;
   currentThread?: Thread | null;
@@ -90,8 +98,12 @@ export function useChatState(options: UseChatStateOptions): UseChatStateReturn {
   const [references, setReferences] = useState<ChatReference[]>([]);
   const isInit = useRef(false);
   const globalThreadStore = useThreadStore();
-  const currentThread = options.currentThread !== undefined ? options.currentThread : globalThreadStore.currentThread;
-  const setCurrentThread = options.setCurrentThread || globalThreadStore.setCurrentThread;
+  const currentThread =
+    options.currentThread !== undefined
+      ? options.currentThread
+      : globalThreadStore.currentThread;
+  const setCurrentThread =
+    options.setCurrentThread || globalThreadStore.setCurrentThread;
   const forceUpdate = useForceUpdate();
 
   const messagesRef = useRef<UIMessage[]>([]);
@@ -107,116 +119,140 @@ export function useChatState(options: UseChatStateOptions): UseChatStateReturn {
       currentThreadRef.current = thread;
       setCurrentThread(thread);
     },
-    [setCurrentThread],
+    [setCurrentThread]
   );
 
-  const handleReasoningTimesUpdate = (messageId: string, reasoningTimes: ReasoningTimes) => {
+  const handleReasoningTimesUpdate = (
+    messageId: string,
+    reasoningTimes: ReasoningTimes
+  ) => {
     reasoningTimesRef.current[messageId] = reasoningTimes;
   };
 
-  const { selectedModel, setSelectedModel, currentModelInstance } = useModelSelector("deepseek", "deepseek-chat");
+  const { selectedModel, setSelectedModel, currentModelInstance } =
+    useModelSelector("deepseek", "deepseek-chat");
 
-  const { messages, status, error, stop, setMessages, sendMessage, clearError, regenerate } = useChat(
-    currentModelInstance || "deepseek-chat",
-    {
-      experimental_throttle: 50,
-      messages: [],
-      chatContext,
-      onError: (error) => {
-        console.error("Error:", error);
-      },
-      onFinish: ({ message, messages: finishedMessages, isError }) => {
-        const { selectedModel } = useProviderStore.getState();
-        const thread = currentThreadRef.current;
-        const resolvedMessages = finishedMessages ?? messagesRef.current;
+  const {
+    messages,
+    status,
+    error,
+    stop,
+    setMessages,
+    sendMessage,
+    clearError,
+    regenerate,
+  } = useChat(currentModelInstance || "deepseek-chat", {
+    experimental_throttle: 50,
+    messages: [],
+    chatContext,
+    getLiveChatContext: options.getLiveChatContext,
+    onError: (error) => {
+      console.error("Error:", error);
+    },
+    onFinish: ({ message, messages: finishedMessages, isError }) => {
+      const { selectedModel } = useProviderStore.getState();
+      const thread = currentThreadRef.current;
+      const resolvedMessages = finishedMessages ?? messagesRef.current;
 
-        let nextMessages = resolvedMessages;
+      let nextMessages = resolvedMessages;
 
-        if (isError) {
-          const lastMessage = resolvedMessages[resolvedMessages.length - 1];
-          if (lastMessage?.role === "assistant") {
-            const assistantHasContent = Array.isArray(lastMessage.parts)
-              ? lastMessage.parts.some((part: any) => part?.type === "text" && part?.text?.trim())
-              : false;
-            if (!assistantHasContent) {
-              nextMessages = resolvedMessages.slice(0, -1);
-            }
-          }
-        } else if (message) {
-          const reasoningTimes = reasoningTimesRef.current[message.id] || {};
-          const messageIndex = resolvedMessages.findIndex((item) => item.id === message.id);
-
-          if (messageIndex !== -1) {
-            const messageWithMetadata = {
-              ...message,
-              metadata: {
-                ...((message.metadata as MessageMetadata) || {}),
-                provider: selectedModel,
-                selectedModel,
-                createdAt: Math.floor(Date.now() / 1000),
-                updatedAt: Math.floor(Date.now() / 1000),
-                reasoningTimes,
-              } as MessageMetadata,
-            };
-
-            nextMessages = [
-              ...resolvedMessages.slice(0, messageIndex),
-              messageWithMetadata,
-              ...resolvedMessages.slice(messageIndex + 1),
-            ];
+      if (isError) {
+        const lastMessage = resolvedMessages[resolvedMessages.length - 1];
+        if (lastMessage?.role === "assistant") {
+          const assistantHasContent = Array.isArray(lastMessage.parts)
+            ? lastMessage.parts.some(
+                (part: any) => part?.type === "text" && part?.text?.trim()
+              )
+            : false;
+          if (!assistantHasContent) {
+            nextMessages = resolvedMessages.slice(0, -1);
           }
         }
+      } else if (message) {
+        const reasoningTimes = reasoningTimesRef.current[message.id] || {};
+        const messageIndex = resolvedMessages.findIndex(
+          (item) => item.id === message.id
+        );
 
-        const normalizedMessages = Array.isArray(nextMessages) ? [...nextMessages] : [...messagesRef.current];
-        messagesRef.current = normalizedMessages;
-        setMessages(normalizedMessages);
+        if (messageIndex !== -1) {
+          const messageWithMetadata = {
+            ...message,
+            metadata: {
+              ...((message.metadata as MessageMetadata) || {}),
+              provider: selectedModel,
+              selectedModel,
+              createdAt: Math.floor(Date.now() / 1000),
+              updatedAt: Math.floor(Date.now() / 1000),
+              reasoningTimes,
+            } as MessageMetadata,
+          };
 
-        if (isError) {
-          return;
+          nextMessages = [
+            ...resolvedMessages.slice(0, messageIndex),
+            messageWithMetadata,
+            ...resolvedMessages.slice(messageIndex + 1),
+          ];
         }
+      }
 
-        const persistMessages = (threadId: string) =>
-          editThread(threadId, { messages: normalizedMessages })
-            .then((updatedThread) => {
-              console.log("Thread updated successfully:", updatedThread.id);
-              syncCurrentThread(updatedThread);
+      const normalizedMessages = Array.isArray(nextMessages)
+        ? [...nextMessages]
+        : [...messagesRef.current];
+      messagesRef.current = normalizedMessages;
+      setMessages(normalizedMessages);
 
-              // 后台触发记忆自动提取（不阻塞）
-              maybeExtractMemories(
-                updatedThread.id,
-                normalizedMessages,
-                activeBookId,
-              ).catch(() => {});
+      if (isError) {
+        return;
+      }
+
+      const persistMessages = (threadId: string) =>
+        editThread(threadId, { messages: normalizedMessages })
+          .then((updatedThread) => {
+            console.log("Thread updated successfully:", updatedThread.id);
+            syncCurrentThread(updatedThread);
+
+            // 后台触发记忆自动提取（不阻塞）
+            maybeExtractMemories(
+              updatedThread.id,
+              normalizedMessages,
+              activeBookId
+            ).catch(() => {});
+          })
+          .catch((error) => {
+            console.error("Failed to update thread:", error);
+          });
+
+      if (thread?.id) {
+        persistMessages(thread.id);
+      } else {
+        try {
+          const firstUserText =
+            normalizedMessages
+              .find((m) => m.role === "user")
+              ?.parts?.map((p: any) => (p.type === "text" ? p.text : ""))
+              .join("") || "新对话";
+          createThread(
+            activeBookId,
+            firstUserText.slice(0, 50),
+            normalizedMessages
+          )
+            .then((thread) => {
+              console.log("Created thread on finish:", thread.id);
+              syncCurrentThread(thread);
+              persistMessages(thread.id);
             })
             .catch((error) => {
-              console.error("Failed to update thread:", error);
+              console.error("Failed to create thread on finish:", error);
             });
-
-        if (thread?.id) {
-          persistMessages(thread.id);
-        } else {
-          try {
-            const firstUserText =
-              normalizedMessages
-                .find((m) => m.role === "user")
-                ?.parts?.map((p: any) => (p.type === "text" ? p.text : ""))
-                .join("") || "新对话";
-            createThread(activeBookId, firstUserText.slice(0, 50), normalizedMessages)
-              .then((thread) => {
-                console.log("Created thread on finish:", thread.id);
-                syncCurrentThread(thread);
-                persistMessages(thread.id);
-              })
-              .catch((error) => {
-                console.error("Failed to create thread on finish:", error);
-              });
-          } catch (error) {
-            console.error("Unexpected error during thread creation on finish:", error);
-          }
+        } catch (error) {
+          console.error(
+            "Unexpected error during thread creation on finish:",
+            error
+          );
         }
-      },
+      }
     },
-  );
+  });
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -286,10 +322,11 @@ export function useChatState(options: UseChatStateOptions): UseChatStateReturn {
     };
   }, [setMessages, syncCurrentThread]);
 
-
-
   const createReferenceId = useCallback(() => {
-    const cryptoObj = typeof globalThis !== "undefined" ? (globalThis as any).crypto : undefined;
+    const cryptoObj =
+      typeof globalThis !== "undefined"
+        ? (globalThis as any).crypto
+        : undefined;
     if (cryptoObj && typeof cryptoObj.randomUUID === "function") {
       return cryptoObj.randomUUID() as string;
     }
@@ -311,40 +348,45 @@ export function useChatState(options: UseChatStateOptions): UseChatStateReturn {
       });
 
       setTimeout(() => {
-        const textarea = document.querySelector("#chat-sidebar textarea") as HTMLTextAreaElement;
+        const textarea = document.querySelector(
+          "#chat-sidebar textarea"
+        ) as HTMLTextAreaElement;
         console.log("textarea", textarea);
         if (textarea) {
           textarea.focus();
         }
       }, 200);
     },
-    [createReferenceId],
+    [createReferenceId]
   );
 
   const handleRemoveReference = useCallback((id: string) => {
     setReferences((prev) => prev.filter((reference) => reference.id !== id));
   }, []);
 
-  const buildMessageParts = useCallback((question: string, refs: ChatReference[]) => {
-    const parts: any[] = [];
-    refs.forEach((reference, index) => {
-      parts.push({
-        type: "quote",
-        text: reference.text,
-        source: `引用${index + 1}`,
-        id: reference.id,
+  const buildMessageParts = useCallback(
+    (question: string, refs: ChatReference[]) => {
+      const parts: any[] = [];
+      refs.forEach((reference, index) => {
+        parts.push({
+          type: "quote",
+          text: reference.text,
+          source: `引用${index + 1}`,
+          id: reference.id,
+        });
       });
-    });
 
-    if (question.trim()) {
-      parts.push({
-        type: "text",
-        text: question.trim(),
-      });
-    }
+      if (question.trim()) {
+        parts.push({
+          type: "text",
+          text: question.trim(),
+        });
+      }
 
-    return parts;
-  }, []);
+      return parts;
+    },
+    []
+  );
 
   /**
    * 异步生成语义上下文
@@ -373,7 +415,7 @@ export function useChatState(options: UseChatStateOptions): UseChatStateReturn {
           userQuestion,
           previousContext,
           previousAnswer,
-          selectedModel || undefined,
+          selectedModel || undefined
         );
 
         await updateThreadContext(thread.id, contextResponse.context);
@@ -382,7 +424,7 @@ export function useChatState(options: UseChatStateOptions): UseChatStateReturn {
         console.error("Failed to generate semantic context:", error);
       }
     },
-    [selectedModel, setActiveContext],
+    [selectedModel, setActiveContext]
   );
 
   const handleSubmit = useCallback(
@@ -395,13 +437,20 @@ export function useChatState(options: UseChatStateOptions): UseChatStateReturn {
 
       setDisplayError(null);
 
-      const referenceSnapshot = references.map((reference) => ({ ...reference }));
+      const referenceSnapshot = references.map((reference) => ({
+        ...reference,
+      }));
       const messageParts = buildMessageParts(trimmedInput, referenceSnapshot);
 
       if (messages.length === 0 && !currentThreadRef.current) {
         try {
-          const titleSource = trimmedInput || referenceSnapshot[0]?.text || "新对话";
-          const thread = await createThread(activeBookId, titleSource.substring(0, 50), []);
+          const titleSource =
+            trimmedInput || referenceSnapshot[0]?.text || "新对话";
+          const thread = await createThread(
+            activeBookId,
+            titleSource.substring(0, 50),
+            []
+          );
           syncCurrentThread(thread);
           console.log("Created new thread:", thread.id);
         } catch (error) {
@@ -427,7 +476,8 @@ export function useChatState(options: UseChatStateOptions): UseChatStateReturn {
             if (message?.role !== "user") {
               continue;
             }
-            const existingMetadata = (message.metadata as MessageMetadata) || {};
+            const existingMetadata =
+              (message.metadata as MessageMetadata) || {};
             nextMessages[i] = {
               ...message,
               parts: messageParts,
@@ -457,7 +507,7 @@ export function useChatState(options: UseChatStateOptions): UseChatStateReturn {
       setMessages,
       syncCurrentThread,
       generateSemanticContextAsync,
-    ],
+    ]
   );
 
   const handleNewThread = useCallback(() => {
@@ -498,12 +548,17 @@ export function useChatState(options: UseChatStateOptions): UseChatStateReturn {
         const threadContext = getThreadContext(fullThread);
         setActiveContext(threadContext || undefined);
 
-        console.log("Selected thread:", fullThread.id, "context loaded:", !!threadContext);
+        console.log(
+          "Selected thread:",
+          fullThread.id,
+          "context loaded:",
+          !!threadContext
+        );
       } catch (error) {
         console.error("Failed to load thread:", error);
       }
     },
-    [setMessages, setActiveBookId, setActiveContext, syncCurrentThread],
+    [setMessages, setActiveBookId, setActiveContext, syncCurrentThread]
   );
 
   const handleBackFromThreads = useCallback(() => {

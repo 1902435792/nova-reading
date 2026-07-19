@@ -10,9 +10,10 @@ use crate::core::{
         update_book_note, update_book_status, update_reading_session,
     },
     co_reading::commands::{
-        claim_co_reading_blocks, complete_co_reading_batch, get_co_reading_snapshot,
-        get_queued_co_reading_blocks, persist_co_reading_focus, release_co_reading_focus,
-        retry_co_reading_blocks, update_co_reading_settings, upsert_co_reading_blocks,
+        claim_co_reading_blocks, complete_co_reading_batch, get_co_reading_diary_sources,
+        get_co_reading_snapshot, get_queued_co_reading_blocks, mark_co_reading_diary_written,
+        persist_co_reading_focus, release_co_reading_focus, retry_co_reading_blocks,
+        update_co_reading_settings, upsert_co_reading_blocks,
     },
     co_reading::range::{
         advance_co_reading_range_task, create_co_reading_range_task, fail_co_reading_range_section,
@@ -109,13 +110,14 @@ pub fn run() {
             get_reading_sessions_by_book,
             get_active_reading_session,
             get_all_reading_sessions,
-            // book notes
             create_book_note,
             get_book_notes,
             update_book_note,
             delete_book_note,
             // co-reading
             get_co_reading_snapshot,
+            get_co_reading_diary_sources,
+            mark_co_reading_diary_written,
             update_co_reading_settings,
             upsert_co_reading_blocks,
             get_queued_co_reading_blocks,

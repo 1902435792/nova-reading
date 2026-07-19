@@ -183,6 +183,10 @@ export interface CoReadingRuntimeState {
   leadingBlockDwellMs: number;
   /** Current visible page/spread focus or the focus being processed. */
   focusKey: string | null;
+  /** Queued blocks belonging to off-screen historical focuses. */
+  historicalQueuedBlockCount: number;
+  /** Current visible blocks that already reached silent/annotated terminal state. */
+  visibleTerminalBlockCount: number;
   processingBlockCount: number;
   processingStartedAt: number | null;
   runBlocked: boolean;
@@ -274,6 +278,45 @@ export interface CoReadingFootprint {
   updatedAt: number;
   processedAt: number | null;
 }
+
+export type CoReadingDiarySourceKind = "ordinary" | "range";
+
+/**
+ * Book-scoped source contract for Agent diaries. A source key identifies the
+ * co-reading record itself; sourceNoteId is deliberately not part of this
+ * relationship because it belongs to human-underline review generation.
+ */
+export interface CoReadingDiarySourceRecord {
+  sourceKey: string;
+  sourceKind: CoReadingDiarySourceKind;
+  sourceAnnotationId: string | null;
+  taskId: string | null;
+  blockKey: string | null;
+  bookId: string;
+  sectionIndex: number;
+  sectionLabel: string;
+  cfi: string;
+  text: string;
+  comment: string | null;
+  summary: string | null;
+  status: CoReadingFootprintStatus;
+  createdAt: number;
+  annotationId: string | null;
+  writtenAt: number | null;
+  diaryId: string | null;
+}
+
+export interface MarkCoReadingDiaryWrittenData {
+  bookId: string;
+  diaryId: string;
+  sourceKeys: string[];
+}
+
+export interface MarkCoReadingDiaryWrittenResult {
+  diaryId: string;
+  writtenCount: number;
+}
+
 export interface CoReadingRangeSnapshot {
   tasks: CoReadingRangeTask[];
   footprints: CoReadingFootprint[];

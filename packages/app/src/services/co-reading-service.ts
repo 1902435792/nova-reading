@@ -2,6 +2,7 @@ import type {
   AdvanceCoReadingRangeTaskData,
   CoReadingBlock,
   CoReadingBlockUpsert,
+  CoReadingDiarySourceRecord,
   CoReadingFootprint,
   CoReadingFootprintUpsert,
   CoReadingRangeSnapshot,
@@ -12,20 +13,40 @@ import type {
   CreateCoReadingRangeTaskData,
   FailCoReadingRangeSectionData,
   FailCoReadingRangeSectionResult,
+  MarkCoReadingDiaryWrittenData,
+  MarkCoReadingDiaryWrittenResult,
   PersistCoReadingFocusData,
   PersistCoReadingFocusResult,
   PersistCoReadingRangeSectionData,
+  PersistCoReadingRangeSectionResult,
   ReleaseCoReadingFocusData,
   ReleaseCoReadingFocusResult,
-  PersistCoReadingRangeSectionResult,
   UpdateCoReadingSettingsData,
 } from "@/types/co-reading";
 import { invoke } from "@tauri-apps/api/core";
-
 export function getCoReadingSnapshot(
   bookId: string
 ): Promise<CoReadingSnapshot> {
   return invoke<CoReadingSnapshot>("get_co_reading_snapshot", { bookId });
+}
+
+export function getCoReadingDiarySources(
+  bookId: string
+): Promise<CoReadingDiarySourceRecord[]> {
+  return invoke<CoReadingDiarySourceRecord[]>("get_co_reading_diary_sources", {
+    bookId,
+  });
+}
+
+export function markCoReadingDiaryWritten(
+  data: MarkCoReadingDiaryWrittenData
+): Promise<MarkCoReadingDiaryWrittenResult> {
+  return invoke<MarkCoReadingDiaryWrittenResult>(
+    "mark_co_reading_diary_written",
+    {
+      data,
+    }
+  );
 }
 
 export function updateCoReadingSettings(

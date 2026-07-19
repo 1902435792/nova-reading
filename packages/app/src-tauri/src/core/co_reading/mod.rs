@@ -5,15 +5,15 @@ pub mod range;
 #[cfg(test)]
 mod tests {
     use super::commands::{
-        claim_blocks, complete_batch, get_snapshot, persist_focus, queued_blocks, release_focus,
-        retry_blocks, update_settings, upsert_blocks,
+        claim_blocks, complete_batch, get_diary_sources, get_snapshot, mark_diary_written,
+        persist_focus, queued_blocks, release_focus, retry_blocks, update_settings, upsert_blocks,
     };
     use super::models::{
         AdvanceCoReadingRangeTaskData, ClaimCoReadingBlocksData, CoReadingBlockUpsert,
         CoReadingFootprintUpsert, CoReadingNoteCreateData, CompleteCoReadingBatchData,
-        CreateCoReadingRangeTaskData, FailCoReadingRangeSectionData, PersistCoReadingFocusData,
-        PersistCoReadingRangeSectionData, ReleaseCoReadingFocusData, RetryCoReadingBlocksData,
-        UpdateCoReadingRangeTaskData, UpdateCoReadingSettingsData,
+        CreateCoReadingRangeTaskData, FailCoReadingRangeSectionData, MarkCoReadingDiaryWrittenData,
+        PersistCoReadingFocusData, PersistCoReadingRangeSectionData, ReleaseCoReadingFocusData,
+        RetryCoReadingBlocksData, UpdateCoReadingRangeTaskData, UpdateCoReadingSettingsData,
     };
     use super::range::{
         advance_task, create_task, fail_range_section, get_task, persist_range_section,
@@ -101,6 +101,29 @@ mod tests {
         .execute(pool)
         .await
         .expect("insert book");
+    }
+
+    async fn insert_ai_diary_note(
+        pool: &sqlx::SqlitePool,
+        id: &str,
+        text: Option<&str>,
+        note: &str,
+        source_note_id: Option<&str>,
+        created_at: i64,
+    ) {
+        sqlx::query(
+            "INSERT INTO book_notes (id,book_id,type,cfi,text,style,color,author,source_note_id,note,created_at,updated_at) VALUES (?,'book','annotation',?,?,'underline','blue','ai',?,?,?,?)",
+        )
+        .bind(id)
+        .bind(format!("epubcfi(/6/2[{id}])"))
+        .bind(text)
+        .bind(source_note_id)
+        .bind(note)
+        .bind(created_at)
+        .bind(created_at)
+        .execute(pool)
+        .await
+        .expect("insert diary source note");
     }
 
     fn block(block_key: &str, dwell_ms: i64, status: &str) -> CoReadingBlockUpsert {
@@ -1947,6 +1970,133 @@ mod tests {
             .unwrap();
             assert_eq!(ordinary_status(&pool).await, previous);
         }
+    }
+
+    #[tokio::test]
+    async fn diary_sources_unify_ordinary_annotations_and_range_footprints() {
+        let pool = create_test_pool().await;
+        insert_book(&pool).await;
+        insert_ai_diary_note(
+            &pool,
+            "ordinary",
+            Some("ordinary quote"),
+            "ordinary comment",
+            None,
+            100,
+        )
+        .await;
+        insert_ai_diary_note(&pool, "empty", None, "", None, 150).await;
+        insert_ai_diary_note(
+            &pool,
+            "manual-review",
+            Some("manual quote"),
+            "manual comment",
+            Some("human-note"),
+            160,
+        )
+        .await;
+
+        let task = create_task(&pool, range_data(2, 2)).await.unwrap();
+        let now = chrono::Utc::now().timestamp_millis();
+        sqlx::query("INSERT INTO co_reading_footprints (id,task_id,book_id,block_key,section_index,section_label,cfi,text,text_hash,status,reason,summary,comment,annotation_id,created_at,updated_at,processed_at) VALUES ('foot-range',?,'book','range-block',2,'Range Chapter','epubcfi(/6/6!/4/2)','range quote','range-hash','annotated',NULL,'range summary','range comment',NULL,?,?,?)")
+            .bind(&task.id)
+            .bind(now)
+            .bind(now)
+            .bind(now)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO co_reading_footprints (id,task_id,book_id,block_key,section_index,section_label,cfi,text,text_hash,status,reason,summary,comment,annotation_id,created_at,updated_at,processed_at) VALUES ('foot-silent',?,'book','silent-block',3,'Silent Chapter','epubcfi(/6/8!/4/2)','silent quote','silent-hash','silent',NULL,'silent summary',NULL,NULL,?,?,?)")
+            .bind(&task.id)
+            .bind(now + 1)
+            .bind(now + 1)
+            .bind(now + 1)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let sources = get_diary_sources(&pool, "book").await.unwrap();
+        assert_eq!(sources.len(), 4);
+        let expected_keys = vec![
+            "empty".to_string(),
+            "ordinary".to_string(),
+            format!("range:{}:range-block", task.id),
+            format!("range:{}:silent-block", task.id),
+        ];
+        assert_eq!(
+            sources
+                .iter()
+                .map(|item| item.source_key.clone())
+                .collect::<Vec<_>>(),
+            expected_keys
+        );
+        let ordinary = sources
+            .iter()
+            .find(|item| item.source_key == "ordinary")
+            .unwrap();
+        assert_eq!(ordinary.source_kind, "ordinary");
+        assert_eq!(ordinary.status, "annotated");
+        let range = sources
+            .iter()
+            .find(|item| item.block_key.as_deref() == Some("range-block"))
+            .unwrap();
+        assert_eq!(range.source_kind, "range");
+        assert_eq!(range.status, "annotated");
+        assert!(sources
+            .iter()
+            .all(|item| item.source_key != "manual-review"));
+    }
+
+    #[tokio::test]
+    async fn diary_ledger_marks_both_source_kinds_idempotently_and_rejects_reassignment() {
+        let pool = create_test_pool().await;
+        insert_book(&pool).await;
+        insert_ai_diary_note(
+            &pool,
+            "ordinary",
+            Some("ordinary quote"),
+            "ordinary comment",
+            None,
+            100,
+        )
+        .await;
+        let task = create_task(&pool, range_data(2, 2)).await.unwrap();
+        let now = chrono::Utc::now().timestamp_millis();
+        sqlx::query("INSERT INTO co_reading_footprints (id,task_id,book_id,block_key,section_index,section_label,cfi,text,text_hash,status,reason,summary,comment,annotation_id,created_at,updated_at,processed_at) VALUES ('foot-range',?,'book','range-block',2,'Range Chapter','epubcfi(/6/6!/4/2)','range quote','range-hash','annotated',NULL,'range summary','range comment',NULL,?,?,?)")
+            .bind(&task.id)
+            .bind(now)
+            .bind(now)
+            .bind(now)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let range_key = format!("range:{}:range-block", task.id);
+        let data = || MarkCoReadingDiaryWrittenData {
+            book_id: "book".to_string(),
+            diary_id: "daily-note-1".to_string(),
+            source_keys: vec!["ordinary".to_string(), range_key.clone()],
+        };
+
+        let first = mark_diary_written(&pool, data()).await.unwrap();
+        assert_eq!(first.written_count, 2);
+        let replay = mark_diary_written(&pool, data()).await.unwrap();
+        assert_eq!(replay.written_count, 0);
+        let sources = get_diary_sources(&pool, "book").await.unwrap();
+        assert!(sources.iter().all(|item| {
+            item.written_at.is_some() && item.diary_id.as_deref() == Some("daily-note-1")
+        }));
+
+        let conflict = mark_diary_written(
+            &pool,
+            MarkCoReadingDiaryWrittenData {
+                book_id: "book".to_string(),
+                diary_id: "daily-note-2".to_string(),
+                source_keys: vec![range_key],
+            },
+        )
+        .await
+        .expect_err("one source cannot be reassigned to another diary");
+        assert!(conflict.contains("另一篇日记"));
     }
 
     fn range_footprint(

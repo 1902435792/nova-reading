@@ -42,10 +42,7 @@ export function identifyVisibleFocus(
   return { focusKey, blockKeys };
 }
 
-/**
- * Ordinary co-reading follows the complete visible page/spread only. Historical queued
- * focuses remain recoverable in SQLite, but never become eligible while they are off-screen.
- */
+/** Historical queued focuses stay recoverable but never auto-preempt the visible focus. */
 export function selectVisibleQueuedFocus(
   blocks: VisibleFocusBlock[]
 ): VisibleQueuedFocus | null {
@@ -87,6 +84,39 @@ export function shouldDrainCoReadingQueue(gate: CoReadingDrainGate): boolean {
     !gate.runBlocked &&
     !gate.processing
   );
+}
+
+export interface CoReadingRuntimeLabelInput {
+  status: CoReadingStatus;
+  isProcessing: boolean;
+  runBlocked: boolean;
+  visibleQueuedBlockCount: number;
+  visibleBlockCount: number;
+  visibleTerminalBlockCount: number;
+  visibleFailedBlockCount: number;
+  historicalQueuedBlockCount: number;
+}
+
+/** Canonical UI vocabulary for runtime state; detail belongs in the secondary message. */
+export function getCoReadingRuntimeLabel(
+  state: CoReadingRuntimeLabelInput
+): string {
+  if (state.status !== "active") return "静默";
+  if (state.isProcessing) return "AI正在阅读当前页";
+  if (state.runBlocked || state.visibleFailedBlockCount > 0) return "静默";
+  if (state.visibleQueuedBlockCount > 0) {
+    return `当前一页已就绪，等待${state.visibleQueuedBlockCount}个正文`;
+  }
+  if (state.historicalQueuedBlockCount > 0 && state.visibleBlockCount === 0) {
+    return "历史待处理";
+  }
+  if (
+    state.visibleBlockCount > 0 &&
+    state.visibleTerminalBlockCount < state.visibleBlockCount
+  ) {
+    return "正在跟随阅读";
+  }
+  return "静默";
 }
 
 export function isClaimedFocusCommitted(
@@ -178,11 +208,8 @@ export function combineAbortSignals(
     if (!controller.signal.aborted) controller.abort(signal.reason);
   };
   for (const signal of available) {
-    if (signal.aborted) {
-      abort(signal);
-      break;
-    }
-    signal.addEventListener("abort", () => abort(signal), { once: true });
+    if (signal.aborted) abort(signal);
+    else signal.addEventListener("abort", () => abort(signal), { once: true });
   }
   return controller.signal;
 }

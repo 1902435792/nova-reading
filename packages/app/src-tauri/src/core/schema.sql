@@ -239,6 +239,21 @@ CREATE INDEX IF NOT EXISTS idx_co_reading_footprints_task_status
 CREATE INDEX IF NOT EXISTS idx_co_reading_footprints_annotation
     ON co_reading_footprints(annotation_id);
 
+-- Agent diary source ledger. source_key is a co-reading source identity, not source_note_id.
+CREATE TABLE IF NOT EXISTS co_reading_diary_entries (
+    id TEXT PRIMARY KEY NOT NULL,
+    book_id TEXT NOT NULL,
+    source_kind TEXT NOT NULL CHECK (source_kind IN ('ordinary', 'range')),
+    source_key TEXT NOT NULL,
+    written_at INTEGER NOT NULL,
+    diary_id TEXT NOT NULL,
+    FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE,
+    UNIQUE (book_id, source_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_co_reading_diary_entries_book
+    ON co_reading_diary_entries(book_id, written_at DESC);
+
 -- 技能库表 - 存储 AI 技能的标准操作流程
 CREATE TABLE IF NOT EXISTS skills (
     id TEXT PRIMARY KEY NOT NULL,

@@ -16,6 +16,7 @@ import {
   updateCoReadingSettings,
 } from "@/services/co-reading-service";
 import { type SelectedModel, useProviderStore } from "@/store/provider-store";
+import { getCoReadingRuntimeLabel } from "@/lib/co-reading-run-state";
 import {
   ChevronDown,
   ChevronRight,
@@ -106,15 +107,16 @@ export function CoReadingPanelV2({
         ? "已关闭"
         : snapshot.settings.status === "paused"
         ? "已暂停"
-        : runtime.isProcessing
-        ? "Agent 正在阅读当前页"
-        : runtime.runBlocked || runtime.visibleFailedBlockCount > 0
-        ? "当前页面失败，等待重试"
-        : runtime.visibleQueuedBlockCount > 0
-        ? `当前页已就绪，等待 Agent（${runtime.visibleQueuedBlockCount} 段正文）`
-        : runtime.visibleBlockCount > 0
-        ? `Agent 正在跟随当前页（${runtime.visibleBlockCount} 段正文）`
-        : "等待捕获当前可见页",
+        : getCoReadingRuntimeLabel({
+            status: snapshot.settings.status,
+            isProcessing: runtime.isProcessing,
+            runBlocked: runtime.runBlocked,
+            visibleQueuedBlockCount: runtime.visibleQueuedBlockCount,
+            visibleBlockCount: runtime.visibleBlockCount,
+            visibleTerminalBlockCount: runtime.visibleTerminalBlockCount,
+            visibleFailedBlockCount: runtime.visibleFailedBlockCount,
+            historicalQueuedBlockCount: runtime.historicalQueuedBlockCount,
+          }),
     progress: `${snapshot.stats.annotated} 条边注`,
     lastMessage:
       runtime.error ||
@@ -237,7 +239,7 @@ export function CoReadingPanelV2({
       </span>
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-2">
-          <strong className="text-sm">Agent 共读</strong>
+          <strong className="text-sm">Agent</strong>
           <i
             className={`size-2 rounded-full ${
               snapshot.settings.status === "active"
@@ -369,11 +371,7 @@ export function CoReadingPanelV2({
               请先选择模型。范围阅读和普通跟读共用这个模型。
             </p>
           )}
-          <CoReadingDiaryAction
-            bookId={bookId}
-            bookTitle={bookTitle}
-            settings={snapshot.settings}
-          />
+          <CoReadingDiaryAction bookId={bookId} bookTitle={bookTitle} />
           <Accordion
             expandedValue={section}
             onValueChange={setSection}

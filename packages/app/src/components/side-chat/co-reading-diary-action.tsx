@@ -1,5 +1,4 @@
 import { Button } from "@/components/ui/button";
-import type { CoReadingSettings } from "@/types/co-reading";
 import { NotebookPen } from "lucide-react";
 import { useState } from "react";
 import { CoReadingDiaryDialog } from "./co-reading-diary-dialog";
@@ -7,10 +6,12 @@ import { CoReadingDiaryDialog } from "./co-reading-diary-dialog";
 interface CoReadingDiaryActionProps {
   bookId: string;
   bookTitle: string;
-  settings: Pick<CoReadingSettings, "modelProviderId" | "modelId">;
 }
 
-export function CoReadingDiaryAction({ bookId, bookTitle, settings }: CoReadingDiaryActionProps) {
+export function CoReadingDiaryAction({
+  bookId,
+  bookTitle,
+}: CoReadingDiaryActionProps) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -19,12 +20,14 @@ export function CoReadingDiaryAction({ bookId, bookTitle, settings }: CoReadingD
         <div className="min-w-0">
           <p className="flex items-center gap-2 font-semibold text-sm">
             <NotebookPen className="size-4 text-primary" />
-            共读日记
+            Agent
           </p>
-          <p className="mt-1 text-muted-foreground text-xs">选择最近的 AI 共读记录，写入今日日记。</p>
+          <p className="mt-1 text-muted-foreground text-xs">
+            选择尚未写入的共读记录，交给 VCP 后端整理并写入日记。
+          </p>
         </div>
         <Button type="button" variant="outline" onClick={() => setOpen(true)}>
-          创建日记
+          Agent
         </Button>
       </section>
       <CoReadingDiaryDialog
@@ -32,7 +35,6 @@ export function CoReadingDiaryAction({ bookId, bookTitle, settings }: CoReadingD
         onOpenChange={setOpen}
         bookId={bookId}
         bookTitle={bookTitle}
-        settings={settings}
       />
     </>
   );

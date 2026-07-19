@@ -1,3 +1,4 @@
+import { sortAnnotationsByReadingOrder } from "@/lib/annotation-order";
 import { validateCoReadingReviewResult } from "@/lib/co-reading-core";
 import {
   createBookNote,
@@ -32,13 +33,12 @@ export const useAnnotations = ({ bookId }: UseAnnotationsProps = {}) => {
     queryFn: async () => {
       if (!bookId) return [];
       const bookNotes = await getBookNotes(bookId);
-      // 过滤出类型为 annotation 且未删除的笔记，并按创建时间倒序排列
-      return bookNotes
-        .filter((note) => note.type === "annotation" && !note.deletedAt)
-        .sort(
-          (a, b) =>
-            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        );
+      // 阅读位置正序：前页/前段在上；生成时间只用于位置不可区分时的稳定兜底。
+      return sortAnnotationsByReadingOrder(
+        bookNotes.filter(
+          (note) => note.type === "annotation" && !note.deletedAt
+        )
+      );
     },
     enabled: !!bookId,
   });

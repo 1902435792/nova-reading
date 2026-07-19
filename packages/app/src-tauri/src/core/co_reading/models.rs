@@ -315,3 +315,40 @@ pub struct FailCoReadingRangeSectionResult {
     pub task: CoReadingRangeTask,
     pub footprints: Vec<CoReadingFootprint>,
 }
+
+#[derive(Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CoReadingDiarySourceRecord {
+    pub source_key: String,
+    pub source_kind: String,
+    pub source_annotation_id: Option<String>,
+    pub task_id: Option<String>,
+    pub block_key: Option<String>,
+    pub book_id: String,
+    pub section_index: i64,
+    pub section_label: String,
+    pub cfi: String,
+    pub text: String,
+    pub comment: Option<String>,
+    pub summary: Option<String>,
+    pub status: String,
+    pub created_at: i64,
+    pub annotation_id: Option<String>,
+    pub written_at: Option<i64>,
+    pub diary_id: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct MarkCoReadingDiaryWrittenData {
+    pub book_id: String,
+    pub diary_id: String,
+    pub source_keys: Vec<String>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct MarkCoReadingDiaryWrittenResult {
+    pub diary_id: String,
+    pub written_count: usize,
+}

@@ -196,9 +196,10 @@ test("stale or mismatched renderer ranges are rejected without expanding a CFI a
   const stale = installDom("<body><p id='stale'>旧页面</p></body>");
   const staleRange = selectText(stale, "stale");
   let resolveCalls = 0;
-  const view = createView([{ doc: current, index: 5 }], [
-    { index: 5, range: staleRange },
-  ]);
+  const view = createView(
+    [{ doc: current, index: 5 }],
+    [{ index: 5, range: staleRange }]
+  );
   view.resolveCFI = () => {
     resolveCalls += 1;
     return { index: 5, anchor: () => null };
@@ -212,6 +213,85 @@ test("stale or mismatched renderer ranges are rejected without expanding a CFI a
     []
   );
   assert.equal(resolveCalls, 0);
+});
+
+test("image-bearing focus extracts only ordinary text and figcaption", () => {
+  const imageSource = "data:image/png;base64,AAECAwQFBgc=";
+  const imageAlt = "这段替代文本不得自动进入共读正文";
+  const doc = installDom(`
+    <body>
+      <figure id="figure">
+        <img src="${imageSource}" alt="${imageAlt}" />
+        <figcaption>图下注释文本</figcaption>
+      </figure>
+      <p id="body-copy">图片旁的正文段落</p>
+    </body>
+  `);
+  const range = doc.createRange();
+  range.selectNodeContents(doc.body);
+  const view = createView([{ doc, index: 6 }], [{ index: 6, range }]);
+
+  const blocks = extractVisibleCoReadingFocus(
+    "book",
+    view,
+    [{ index: 6, range }],
+    "图片页"
+  );
+  assert.deepEqual(
+    blocks.map((block) => block.text.trim()),
+    ["图下注释文本", "图片旁的正文段落"]
+  );
+  const serialized = JSON.stringify(blocks);
+  assert.doesNotMatch(serialized, /data:image|base64|AAECAwQFBgc/u);
+  assert.equal(serialized.includes(imageAlt), false);
+  assert.equal(new Set(blocks.map((block) => block.focusKey)).size, 1);
+});
+
+test("consecutive vertical image-bearing focuses stay separate one-block units", () => {
+  const doc = installDom(`
+    <body>
+      <section id="first-page">
+        <img src="first.png" alt="第一页替代文字" />
+        <p id="first-copy">第一页正文</p>
+      </section>
+      <section id="second-page">
+        <img src="second.png" alt="第二页替代文字" />
+        <p id="second-copy">第二页正文</p>
+      </section>
+    </body>
+  `);
+  const firstRange = selectText(doc, "first-page");
+  const secondRange = selectText(doc, "second-page");
+  const view = createView([{ doc, index: 10 }]);
+
+  const firstFocus = extractVisibleCoReadingFocus(
+    "book",
+    view,
+    [{ index: 10, range: firstRange }],
+    "竖向阅读"
+  );
+  const secondFocus = extractVisibleCoReadingFocus(
+    "book",
+    view,
+    [{ index: 10, range: secondRange }],
+    "竖向阅读"
+  );
+
+  assert.deepEqual(
+    firstFocus.map((block) => block.text),
+    ["第一页正文"]
+  );
+  assert.deepEqual(
+    secondFocus.map((block) => block.text),
+    ["第二页正文"]
+  );
+  assert.equal(firstFocus.length, 1);
+  assert.equal(secondFocus.length, 1);
+  assert.notEqual(firstFocus[0]?.focusKey, secondFocus[0]?.focusKey);
+  assert.doesNotMatch(
+    JSON.stringify([...firstFocus, ...secondFocus]),
+    /\.png|替代文字/u
+  );
 });
 
 test("stable resampling preserves focus identity while a changed page creates a new focus", () => {

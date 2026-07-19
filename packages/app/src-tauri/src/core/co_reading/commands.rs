@@ -3,6 +3,7 @@ use crate::core::state::AppState;
 use sqlx::{Row, SqlitePool};
 use tauri::{AppHandle, Manager};
 use tokio::time::{sleep, Duration};
+use uuid::Uuid;
 
 const PROCESSING_STALE_MS: i64 = 5 * 60 * 1_000;
 const SNAPSHOT_BLOCK_LIMIT: i64 = 100;
@@ -938,6 +939,332 @@ pub async fn get_snapshot(
         stats,
         blocks,
     })
+}
+
+fn diary_source_from_row(
+    row: &sqlx::sqlite::SqliteRow,
+) -> Result<CoReadingDiarySourceRecord, sqlx::Error> {
+    Ok(CoReadingDiarySourceRecord {
+        source_key: row.try_get("source_key")?,
+        source_kind: row.try_get("source_kind")?,
+        source_annotation_id: row.try_get("source_annotation_id")?,
+        task_id: row.try_get("task_id")?,
+        block_key: row.try_get("block_key")?,
+        book_id: row.try_get("book_id")?,
+        section_index: row.try_get("section_index")?,
+        section_label: row.try_get("section_label")?,
+        cfi: row.try_get("cfi")?,
+        text: row.try_get("text")?,
+        comment: row.try_get("comment")?,
+        summary: row.try_get("summary")?,
+        status: row.try_get("status")?,
+        created_at: row.try_get("created_at")?,
+        annotation_id: row.try_get("annotation_id")?,
+        written_at: row.try_get("written_at")?,
+        diary_id: row.try_get("diary_id")?,
+    })
+}
+
+pub(crate) async fn get_diary_sources(
+    pool: &SqlitePool,
+    book_id: &str,
+) -> Result<Vec<CoReadingDiarySourceRecord>, String> {
+    if book_id.trim().is_empty() {
+        return Err("书籍 ID 不能为空".to_string());
+    }
+    let rows = sqlx::query(
+        r#"
+        WITH diary_sources AS (
+            SELECT
+                bn.id AS source_key,
+                CASE
+                    WHEN EXISTS (
+                        SELECT 1 FROM co_reading_footprints footprint
+                        WHERE footprint.book_id = bn.book_id AND footprint.annotation_id = bn.id
+                    ) THEN 'range'
+                    ELSE 'ordinary'
+                END AS source_kind,
+                bn.id AS source_annotation_id,
+                (
+                    SELECT footprint.task_id
+                    FROM co_reading_footprints footprint
+                    WHERE footprint.book_id = bn.book_id AND footprint.annotation_id = bn.id
+                    ORDER BY footprint.updated_at DESC, footprint.id ASC
+                    LIMIT 1
+                ) AS task_id,
+                COALESCE(
+                    (
+                        SELECT block.block_key
+                        FROM co_reading_blocks block
+                        WHERE block.book_id = bn.book_id AND block.annotation_id = bn.id
+                        ORDER BY block.updated_at DESC, block.id ASC
+                        LIMIT 1
+                    ),
+                    (
+                        SELECT footprint.block_key
+                        FROM co_reading_footprints footprint
+                        WHERE footprint.book_id = bn.book_id AND footprint.annotation_id = bn.id
+                        ORDER BY footprint.updated_at DESC, footprint.id ASC
+                        LIMIT 1
+                    )
+                ) AS block_key,
+                bn.book_id,
+                COALESCE(
+                    (
+                        SELECT block.section_index
+                        FROM co_reading_blocks block
+                        WHERE block.book_id = bn.book_id AND block.annotation_id = bn.id
+                        ORDER BY block.updated_at DESC, block.id ASC
+                        LIMIT 1
+                    ),
+                    (
+                        SELECT footprint.section_index
+                        FROM co_reading_footprints footprint
+                        WHERE footprint.book_id = bn.book_id AND footprint.annotation_id = bn.id
+                        ORDER BY footprint.updated_at DESC, footprint.id ASC
+                        LIMIT 1
+                    ),
+                    -1
+                ) AS section_index,
+                COALESCE(
+                    (
+                        SELECT block.section_label
+                        FROM co_reading_blocks block
+                        WHERE block.book_id = bn.book_id AND block.annotation_id = bn.id
+                        ORDER BY block.updated_at DESC, block.id ASC
+                        LIMIT 1
+                    ),
+                    (
+                        SELECT footprint.section_label
+                        FROM co_reading_footprints footprint
+                        WHERE footprint.book_id = bn.book_id AND footprint.annotation_id = bn.id
+                        ORDER BY footprint.updated_at DESC, footprint.id ASC
+                        LIMIT 1
+                    ),
+                    ''
+                ) AS section_label,
+                bn.cfi,
+                COALESCE(bn.text, '') AS text,
+                NULLIF(TRIM(bn.note), '') AS comment,
+                (
+                    SELECT NULLIF(TRIM(footprint.summary), '')
+                    FROM co_reading_footprints footprint
+                    WHERE footprint.book_id = bn.book_id AND footprint.annotation_id = bn.id
+                    ORDER BY footprint.updated_at DESC, footprint.id ASC
+                    LIMIT 1
+                ) AS summary,
+            'annotated' AS status,
+                bn.created_at,
+                bn.id AS annotation_id,
+                diary.written_at,
+                diary.diary_id
+            FROM book_notes bn
+            LEFT JOIN co_reading_diary_entries diary
+                ON diary.book_id = bn.book_id AND diary.source_key = bn.id
+            WHERE bn.book_id = ?
+              AND bn.author = 'ai'
+              AND bn.type = 'annotation'
+              AND bn.source_note_id IS NULL
+
+            UNION ALL
+
+            SELECT
+                'range:' || footprint.task_id || ':' || footprint.block_key AS source_key,
+                'range' AS source_kind,
+                footprint.annotation_id AS source_annotation_id,
+                footprint.task_id,
+                footprint.block_key,
+                footprint.book_id,
+                footprint.section_index,
+                footprint.section_label,
+                footprint.cfi,
+                COALESCE(footprint.text, '') AS text,
+                NULLIF(TRIM(footprint.comment), '') AS comment,
+                NULLIF(TRIM(footprint.summary), '') AS summary,
+                footprint.status,
+                footprint.created_at,
+                footprint.annotation_id,
+                diary.written_at,
+                diary.diary_id
+            FROM co_reading_footprints footprint
+            LEFT JOIN book_notes bn
+                ON bn.id = footprint.annotation_id
+               AND bn.book_id = footprint.book_id
+               AND bn.author = 'ai'
+               AND bn.type = 'annotation'
+               AND bn.source_note_id IS NULL
+            LEFT JOIN co_reading_diary_entries diary
+                ON diary.book_id = footprint.book_id
+               AND diary.source_key = 'range:' || footprint.task_id || ':' || footprint.block_key
+            WHERE footprint.book_id = ?
+              AND bn.id IS NULL
+        )
+        SELECT *
+        FROM diary_sources
+        ORDER BY section_index ASC, cfi ASC, created_at ASC, source_key ASC
+        "#,
+    )
+    .bind(book_id)
+    .bind(book_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| format!("读取共读 Agent 日记来源失败: {error}"))?;
+
+    rows.iter()
+        .map(diary_source_from_row)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("转换共读 Agent 日记来源失败: {error}"))
+}
+
+pub(crate) async fn mark_diary_written(
+    pool: &SqlitePool,
+    data: MarkCoReadingDiaryWrittenData,
+) -> Result<MarkCoReadingDiaryWrittenResult, String> {
+    let book_id = data.book_id.trim();
+    let diary_id = data.diary_id.trim();
+    if book_id.is_empty() || diary_id.is_empty() {
+        return Err("书籍 ID 和 VCP 日记请求 ID 不能为空".to_string());
+    }
+    if data.source_keys.is_empty() || data.source_keys.len() > 100 {
+        return Err("Agent 日记必须包含 1 到 100 条来源记录".to_string());
+    }
+    let mut source_keys = Vec::with_capacity(data.source_keys.len());
+    for source_key in data.source_keys {
+        let key = source_key.trim().to_string();
+        if key.is_empty() || source_keys.contains(&key) {
+            return Err("Agent 日记来源记录不能为空或重复".to_string());
+        }
+        source_keys.push(key);
+    }
+
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|error| format!("开启 Agent 日记账本事务失败: {error}"))?;
+    let book_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM books WHERE id = ?")
+        .bind(book_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|error| format!("读取日记关联书籍失败: {error}"))?;
+    if book_exists != 1 {
+        return Err("日记关联书籍不存在".to_string());
+    }
+
+    for source_key in &source_keys {
+        let eligible: i64 = sqlx::query_scalar(
+            r#"
+            SELECT CASE
+                WHEN EXISTS (
+                    SELECT 1
+                    FROM book_notes
+                    WHERE id = ? AND book_id = ? AND author = 'ai'
+                      AND type = 'annotation' AND source_note_id IS NULL
+                      AND TRIM(COALESCE(text, '')) <> ''
+                      AND TRIM(COALESCE(note, '')) <> ''
+                ) THEN 1
+                WHEN EXISTS (
+                    SELECT 1
+                    FROM co_reading_footprints footprint
+                    WHERE ('range:' || footprint.task_id || ':' || footprint.block_key) = ?
+                      AND footprint.book_id = ?
+                      AND footprint.status = 'annotated'
+                      AND TRIM(COALESCE(footprint.text, '')) <> ''
+                      AND TRIM(COALESCE(footprint.comment, '')) <> ''
+                ) THEN 1
+                ELSE 0
+            END
+            "#,
+        )
+        .bind(source_key)
+        .bind(book_id)
+        .bind(source_key)
+        .bind(book_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|error| format!("校验 Agent 日记来源失败: {error}"))?;
+        if eligible != 1 {
+            return Err(format!("共读来源已删除、串书或不再可用: {source_key}"));
+        }
+
+        let existing_diary: Option<String> = sqlx::query_scalar(
+            "SELECT diary_id FROM co_reading_diary_entries WHERE book_id = ? AND source_key = ?",
+        )
+        .bind(book_id)
+        .bind(source_key)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|error| format!("读取 Agent 日记来源账本失败: {error}"))?;
+        if existing_diary
+            .as_deref()
+            .is_some_and(|existing| existing != diary_id)
+        {
+            return Err(format!("共读来源已由另一篇日记写入: {source_key}"));
+        }
+    }
+
+    let now = chrono::Utc::now().timestamp_millis();
+    let mut written_count = 0usize;
+    for source_key in &source_keys {
+        let inserted = sqlx::query(
+            r#"
+            INSERT OR IGNORE INTO co_reading_diary_entries
+                (id, book_id, source_kind, source_key, written_at, diary_id)
+            VALUES (
+                ?,
+                ?,
+                CASE
+                    WHEN ? LIKE 'range:%' OR EXISTS (
+                        SELECT 1 FROM co_reading_footprints footprint
+                        WHERE footprint.book_id = ? AND footprint.annotation_id = ?
+                    ) THEN 'range'
+                    ELSE 'ordinary'
+                END,
+                ?,
+                ?,
+                ?
+            )
+            "#,
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(book_id)
+        .bind(source_key)
+        .bind(book_id)
+        .bind(source_key)
+        .bind(source_key)
+        .bind(now)
+        .bind(diary_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| format!("写入 Agent 日记来源账本失败: {error}"))?;
+        written_count += inserted.rows_affected() as usize;
+    }
+
+    tx.commit()
+        .await
+        .map_err(|error| format!("提交 Agent 日记账本事务失败: {error}"))?;
+
+    Ok(MarkCoReadingDiaryWrittenResult {
+        diary_id: diary_id.to_string(),
+        written_count,
+    })
+}
+
+#[tauri::command]
+pub async fn get_co_reading_diary_sources(
+    app_handle: AppHandle,
+    book_id: String,
+) -> Result<Vec<CoReadingDiarySourceRecord>, String> {
+    let pool = app_pool(&app_handle).await?;
+    get_diary_sources(&pool, &book_id).await
+}
+
+#[tauri::command]
+pub async fn mark_co_reading_diary_written(
+    app_handle: AppHandle,
+    data: MarkCoReadingDiaryWrittenData,
+) -> Result<MarkCoReadingDiaryWrittenResult, String> {
+    let pool = app_pool(&app_handle).await?;
+    mark_diary_written(&pool, data).await
 }
 
 #[tauri::command]
